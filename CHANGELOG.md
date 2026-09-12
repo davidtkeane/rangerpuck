@@ -4,6 +4,53 @@ All notable changes, milestones, architectural decisions, and agent integrations
 
 ---
 
+## [1.5.0] — 2026-09-12 (Night) — Three bugs only a human could find
+
+Everything here was found by the user sitting in front of the device with a watch, not
+by testing. Each was invisible from inside the system.
+
+### 🔴 Fixed — "9 seconds then thinking showed"
+`send.sh` tried **mDNS first**, then the cached IP. But `rangerpuck.local` **resolves and
+never answers** — the router will not bridge multicast between Ethernet and Wi-Fi — so
+`curl` waited out the full timeout on *every single call*, then fell back to the address
+that works. Measured: **2.19 s per send**. With a hook firing on every prompt, that is the
+difference between a status light and one you stop believing.
+
+Now the cache is the fast path and mDNS is the fallback, timeout 2 s → 1 s.
+**2.19 s → 0.12 s, an 18× improvement.** I had tested the states, the ladder and the
+interrupts, and never once measured how long a message took to *arrive*.
+
+### 🔴 Fixed — the hook never said who it was
+`~/.claude/hooks/rangerpuck.sh` called `send.sh` without a `who` argument and without
+`PUCK_WHO` set. Every state it sent landed in an **anonymous slot with no colour tag**,
+competing with anything sent manually as `CLAUDE`. Two slots, one agent, fighting over one
+screen — and a stale test state kept winning ties. **The orange CLAUDE tag had never once
+appeared**; nobody noticed because there was only ever one agent until Gemini arrived.
+
+### 🔴 Fixed — the radar silently hid the fleet view
+`RADAR` (18) outranks `IDLE` (5), so once aircraft were being tracked the machine list
+**never appeared again**. Both are ambient and neither is urgent, so they now **alternate
+every 12 seconds** when nothing needs a human. A feature that quietly removes another
+feature is the kind of regression tests do not catch, because both still work.
+
+### Changed
+* `RADAR` urgency **30 → 18** — beats a finished job, never live work. *(An earlier
+  attempt at this silently no-opped: the script printed a success message unconditionally
+  after a `str.replace` that matched nothing, and the fix was reported as done when it was
+  not. Later edits assert the change landed.)*
+* Settled states expire in **60 s**, not 3 minutes.
+* `SKY` state added (violet, urgency 45) for ISS passes — **above** "your move", far below
+  amber. `4-sky-siren` was firing `APPROVE` for a satellite; the very first project built
+  to the protocol broke its central rule, because amber is the loudest thing available and
+  reaching for it is the natural move. The reasoning now sits in the code beside the call.
+
+### Noted
+The working copy and the published repo had drifted **17 lines apart**, and a blind copy
+between them wiped a config reader and reintroduced personal paths. They are not the same
+file and must never be copied wholesale. Duplicate-with-drift, sixth occurrence this week.
+
+---
+
 ## [1.4.0] — 2026-09-12 (Late Evening) — Published, and the promise that wasn't true
 
 ### Published
@@ -34,7 +81,7 @@ the network permanently unreachable; `range: 0` dividing by zero in `drawRadar`;
 `curl` exits 0 on an HTTP 400.
 
 ### Changed
-* Cache path `~/.config/rangerpuck/ip` → **`~/.config/rangerpuck/ip`** (XDG, and
+* Cache path `~/.ranger-memory/config/rangerpuck.ip` → **`~/.config/rangerpuck/ip`** (XDG, and
   not a personal path) — both repos agree on the filename now; they previously did not, so
   the advertised fallback between them never fired.
 * `monitor.sh` discovers the board instead of hardcoding one machine's serial device.
@@ -129,7 +176,7 @@ day it is right.**
 * **Self-Healing Transmission Tool (`tools/send.sh`):**
   * Multi-tier connection fallback:
     1. Attempts mDNS (`rangerpuck.local`).
-    2. Falls back to cached IP (`~/.config/rangerpuck/ip`).
+    2. Falls back to cached IP (`~/.ranger-memory/config/rangerpuck.ip`).
     3. Automatically scans subnet (`base.2` to `base.60`) to discover and cache moving DHCP addresses across Ethernet/Wi-Fi bridges.
 
 ---

@@ -71,10 +71,11 @@ int urgency(const String& st) {
   if (st == "APPROVE") return 100;   // a human is BLOCKING — always wins
   if (st == "ERROR")   return 80;
   if (st == "PIGS")    return 75;    // welfare
+  if (st == "SKY")     return 45;   // go and look up — but nothing is blocked
   if (st == "WAITING") return 40;
-  if (st == "RADAR")   return 30;
+  if (st == "RADAR")   return 18;   // ambient: beats a finished job, never live work
   if (st == "SYNC" || st == "RUNNING" || st == "THINKING") return 20;
-  if (st == "DONE")    return 15;
+  if (st == "DONE")    return 15;   // below RADAR on purpose — see above
   return 5;                          // IDLE and anything unknown
 }
 
@@ -133,8 +134,16 @@ struct Plane {
 Plane planes[MAX_PLANES];
 int planeCount = 0;
 float radarRangeKm = 40.0;
+
+// --- ambient rotation -------------------------------------------------------
+// Adding the radar silently hid the fleet view: RADAR outranks IDLE, so once
+// aircraft were being tracked the machine list never appeared again. Both are
+// ambient — neither is urgent — so when nothing needs a human they take turns.
+uint32_t ambientSwapMs = 0;
+bool showFleetNow = false;
+const uint32_t AMBIENT_SWAP = 12000UL;      // 12s each — long enough to read
 const uint32_t EXPIRE_WORKING = 8UL * 60UL * 1000UL;   // THINKING/RUNNING — work can be slow
-const uint32_t EXPIRE_SETTLED = 3UL * 60UL * 1000UL;   // DONE/WAITING/ERROR — short
+const uint32_t EXPIRE_SETTLED = 60UL * 1000UL;         // DONE/WAITING/ERROR/SKY — brief
 // APPROVE never expires: it means someone is genuinely blocked, and the user may be
 // out of the room for an hour. That one has to keep asking.        // CLAUDE / GEMINI / OLLAMA / WEATHER — any agent can drive this
 
@@ -170,6 +179,7 @@ Look lookFor(const String& s) {
   if (s == "RUNNING")  return {ST77XX_CYAN,     0,  80, 255};
   if (s == "DONE")     return {ST77XX_GREEN,    0, 255,   0};  // green — finished
   if (s == "ERROR")    return {ST77XX_RED,    255,   0,   0};  // red   — broken
+  if (s == "SKY")      return {0xFD7F,        180,  80, 255};  // violet — something overhead
   if (s == "SUN")      return {ST77XX_YELLOW, 255, 170,   0};  // yellow — actual sunshine
   if (s == "DRY")      return {ST77XX_GREEN,   0, 140,  40};  // green — go outside
   if (s == "RAIN")     return {0x04FF,        0,  40, 200};  // deep blue — showers
@@ -182,7 +192,8 @@ Look lookFor(const String& s) {
 
 
 // ============================================================================
-//  The mascot — a cat, drawn from primitives. Drawn with primitives rather than a bitmap array so the
+//  The mascot — a cat, because the user has three (Mammy, Kitty, and the tom who
+//  answers to "meow"). Drawn with primitives rather than a bitmap array so the
 //  expression can change per state without carrying six images in flash.
 //  Layout borrowed from the CrabPuck idea; the artwork is ours.
 // ============================================================================
@@ -703,8 +714,17 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  // --- alternate the two ambient screens ----------------------------------
+  if ((curState == "RADAR" || curState == "IDLE") && fleetCount > 0 && planeCount > 0) {
+    if (millis() - ambientSwapMs > AMBIENT_SWAP) {
+      ambientSwapMs = millis();
+      showFleetNow = !showFleetNow;
+      draw();
+    }
+  }
+
   // --- move the aircraft between API updates so it CRAWLS, never jumps -----
-  if (curState == "RADAR" && planeCount) {
+  if (curState == "RADAR" && planeCount && !showFleetNow) {
     // 400ms meant a full-screen repaint two and a half times a second, which
     // reads as flashing from across a room. At 20km an aircraft moves about 200m
     // a second — a pixel or two — so redrawing that often showed nothing new and

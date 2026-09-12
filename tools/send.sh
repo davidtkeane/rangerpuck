@@ -35,20 +35,28 @@ print(json.dumps({"state": os.environ["STATE"], "line1": os.environ["L1"],
 
 try() {  # try <host> -> 0 only if the board actually ACCEPTED it (HTTP 200)
   local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \
          -X POST -H 'Content-Type: application/json' \
          -d "$payload" "http://$1/state" 2>/dev/null)
   [ "$code" = "200" ]
 }
 
-# 1. the name
-if try "$NAME"; then echo "→ $STATE ${L1} ${L2}"; exit 0; fi
-
-# 2. last known good IP
+# 1. LAST KNOWN GOOD IP FIRST.
+#    mDNS was tried first originally, which cost TWO SECONDS on every single
+#    call here: rangerpuck.local RESOLVES but does not answer (the router will
+#    not bridge multicast between Ethernet and Wi-Fi), so curl waited out the
+#    full timeout before falling back to the address that works. With a hook
+#    firing on every prompt that delay is the difference between a status light
+#    and a status light you have stopped believing.
+#    The cache is the fast path. mDNS is the fallback for when the cache is
+#    stale or missing.
 if [ -f "$CACHE" ]; then
   ip=$(cat "$CACHE")
-  if try "$ip"; then echo "→ $STATE ${L1} ${L2}  (via cached $ip)"; exit 0; fi
+  if try "$ip"; then echo "→ $STATE ${L1} ${L2}"; exit 0; fi
 fi
+
+# 2. the mDNS name, for a first run or after the board moves
+if try "$NAME"; then echo "→ $STATE ${L1} ${L2}  (via mDNS)"; exit 0; fi
 
 # 3. sweep the subnet for something that answers as a RangerPuck
 base=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en6 2>/dev/null)
