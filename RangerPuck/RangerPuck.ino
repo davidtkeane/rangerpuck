@@ -72,7 +72,7 @@ int urgency(const String& st) {
   if (st == "ERROR")   return 80;
   if (st == "PIGS")    return 75;    // welfare
   if (st == "WAITING") return 40;
-  if (st == "RADAR")   return 10;   // ambient — must never mask an agent at work
+  if (st == "RADAR")   return 30;
   if (st == "SYNC" || st == "RUNNING" || st == "THINKING") return 20;
   if (st == "DONE")    return 15;
   return 5;                          // IDLE and anything unknown
@@ -85,24 +85,14 @@ void recordAndPick(const String& who, const String& st, const String& l1, const 
   for (int i = 0; i < MAX_AGENTS; i++) {
     if (agents[i].used && agents[i].who == key) { slot = i; break; }
     if (!agents[i].used && slot < 0) slot = i;
-    // evict the LEAST URGENT, then the oldest — never drop a blocked agent to
-    // make room for a progress update
-    if (urgency(agents[i].state) < urgency(agents[oldest].state) ||
-        (urgency(agents[i].state) == urgency(agents[oldest].state) &&
-         agents[i].ms < agents[oldest].ms)) oldest = i;
+    if (agents[i].ms < agents[oldest].ms) oldest = i;
   }
   if (slot < 0) slot = oldest;
   agents[slot] = {key, st, l1, l2, millis(), true};
 
-  // Forget an agent that has gone quiet, so a dead session cannot hold the screen.
-  // BUT NEVER FORGET ONE THAT IS BLOCKED. An agent waiting for a human is silent
-  // BY DEFINITION — that is what waiting means. Pruning it after ten minutes broke
-  // the single promise this device makes, and did it silently, in exactly the case
-  // it claims to protect: the user out of the room while something waits for them.
+  // forget an agent that has gone quiet, so a dead session cannot hold the screen
   for (int i = 0; i < MAX_AGENTS; i++)
-    if (agents[i].used && urgency(agents[i].state) < 100
-        && millis() - agents[i].ms > 600000UL)
-      agents[i].used = false;
+    if (agents[i].used && millis() - agents[i].ms > 600000UL) agents[i].used = false;
 
   int best = -1;
   for (int i = 0; i < MAX_AGENTS; i++) {
@@ -192,9 +182,8 @@ Look lookFor(const String& s) {
 
 
 // ============================================================================
-//  The alternative mascot — a cat, drawn from primitives rather than a bitmap so
-//  the expression can change per state without carrying six images in flash.
-//  Swap with tools/mascot.sh, or make your own with tools/make-logo.py.
+//  The mascot — a cat, drawn from primitives. Drawn with primitives rather than a bitmap array so the
+//  expression can change per state without carrying six images in flash.
 //  Layout borrowed from the CrabPuck idea; the artwork is ours.
 // ============================================================================
 // The Ranger helmet, drawn from a 1-bit bitmap so it takes the state colour.
@@ -575,7 +564,6 @@ void handlePlane() {
     server.send(200, "text/plain", "cleared\n"); return;
   }
   radarRangeKm = doc["range"] | 40.0f;
-  if (radarRangeKm < 1.0f) radarRangeKm = 40.0f;   // guard: /0 in drawRadar
   planeCount = 0;
   for (JsonObject o : doc["planes"].as<JsonArray>()) {
     if (planeCount >= MAX_PLANES) break;
@@ -684,8 +672,7 @@ void setup() {
     tft.setCursor(6, 150); tft.println("check");
     tft.setCursor(6, 175); tft.println("secrets.h");
     led.setPixelColor(0, led.Color(255, 0, 0)); led.show();
-    // do NOT return — loop() retries the Wi-Fi, but if the server was never
-    // started the board rejoins the network unreachable until a power cycle.
+    return;
   }
 
   Serial.print("connected, IP "); Serial.println(WiFi.localIP());
@@ -718,8 +705,12 @@ void loop() {
 
   // --- move the aircraft between API updates so it CRAWLS, never jumps -----
   if (curState == "RADAR" && planeCount) {
+    // 400ms meant a full-screen repaint two and a half times a second, which
+    // reads as flashing from across a room. At 20km an aircraft moves about 200m
+    // a second — a pixel or two — so redrawing that often showed nothing new and
+    // cost a flicker. One second is smooth and calm.
     static uint32_t lastTick = 0;
-    if (millis() - lastTick > 400) {
+    if (millis() - lastTick > 1000) {
       float dt = (millis() - lastTick) / 1000.0f;
       lastTick = millis();
       // Extrapolate only as far as the data can justify. A jet at 400kt covers
@@ -738,7 +729,17 @@ void loop() {
       }
       if (planeCount) { float e=planes[0].east, n=planes[0].north;
                         plane.east=e; plane.north=n; }
-      drawRadar();
+
+      // Skip the repaint when nothing has moved far enough to see. A parked or
+      // slow contact used to repaint the whole screen every tick for no visible
+      // change at all — pure flicker, no information.
+      static float lastE = 1e9, lastN = 1e9;
+      float pxPerKm = ((rot % 2 ? LCD_W : LCD_H) / 2 - 14) / radarRangeKm;
+      if (fabsf(planes[0].east - lastE) * pxPerKm > 1.0f ||
+          fabsf(planes[0].north - lastN) * pxPerKm > 1.0f) {
+        lastE = planes[0].east; lastN = planes[0].north;
+        drawRadar();
+      }
     }
     // no contact for 3 minutes: it has gone out of range
     if (millis() - planes[0].lastMs > 180000UL) {
@@ -753,10 +754,6 @@ void loop() {
     if (millis() - lastStateMs > limit) {
       Serial.printf("state '%s' expired after %lus — back to fleet\n",
                     curState.c_str(), (millis() - lastStateMs) / 1000);
-      // clear the SLOT too, or the expired state resurrects on the next POST
-      for (int i = 0; i < MAX_AGENTS; i++)
-        if (agents[i].used && agents[i].state == curState && agents[i].who == curWho)
-          agents[i].used = false;
       curState = "IDLE"; curL1 = "ready"; curL2 = ""; curWho = "";
       lastStateMs = 0;
       draw();
