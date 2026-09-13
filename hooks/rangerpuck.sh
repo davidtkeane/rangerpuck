@@ -59,8 +59,13 @@ elapsed() {   # how long since David hit enter
 
 when() {      # clock time the wait began — "16:17 · 8m 37s" tells you more than
               # a duration alone, especially if you have been out of the room
+              #
+              # `date -r EPOCH` is BSD; on Linux -r means "reference file" and it
+              # fails with "No such file or directory". GNU wants `date -d @EPOCH`.
+              # Try both so one hook script serves the Macs and the Kali box.
   [ -f "$STAMP" ] || { date +%H:%M; return; }
-  date -r "$(cat "$STAMP" 2>/dev/null)" +%H:%M 2>/dev/null || date +%H:%M
+  local s; s=$(cat "$STAMP" 2>/dev/null) || { date +%H:%M; return; }
+  date -r "$s" +%H:%M 2>/dev/null || date -d "@$s" +%H:%M 2>/dev/null || date +%H:%M
 }
 
 case "$EVENT" in

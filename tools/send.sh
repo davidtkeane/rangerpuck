@@ -16,6 +16,26 @@
 set -uo pipefail
 CACHE="$HOME/.ranger-memory/config/rangerpuck.ip"
 NAME="${PUCK_HOST:-rangerpuck.local}"
+# ---------------------------------------------------------------------------
+# PORTABILITY: this runs on macOS (M3/M4/M5) and on Linux (the Kali box), and
+# three things differ. Wrap them once here rather than sprinkling `uname` checks
+# through the logic.
+#   local IPv4 : macOS `ipconfig getifaddr en0`  vs  Linux `ip -4 addr`
+#   file mtime : macOS `stat -f %m`              vs  Linux `stat -c %Y`
+# ---------------------------------------------------------------------------
+my_ipv4() {
+  if command -v ipconfig >/dev/null 2>&1; then          # macOS
+    ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en6 2>/dev/null
+  elif command -v ip >/dev/null 2>&1; then              # Linux
+    ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1
+  else
+    hostname -I 2>/dev/null | awk '{print $1}'
+  fi
+}
+mtime() {  # mtime <file> -> epoch seconds, 0 if missing
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+}
+
 STATE="${1:-IDLE}"; L1="${2:-}"; L2="${3:-}"
 # WHO is speaking — any agent can drive this board. Set PUCK_WHO in the caller's
 # environment (CLAUDE / GEMINI / OLLAMA / QWEN / WEATHER) or pass it as $4.
@@ -69,7 +89,7 @@ if try "$NAME"; then echo "→ $STATE ${L1} ${L2}  (via mDNS)"; exit 0; fi
 SWEPT="$HOME/.ranger-memory/config/.puck-swept"
 if [ -n "$base" ]; then
   if [ -f "$SWEPT" ]; then
-    age=$(( $(date +%s) - $(stat -f %m "$SWEPT" 2>/dev/null || echo 0) ))
+    age=$(( $(date +%s) - $(mtime "$SWEPT") ))
     if [ "$age" -lt 60 ]; then
       echo "puck unreachable — swept ${age}s ago, not sweeping again yet" >&2; exit 1
     fi
