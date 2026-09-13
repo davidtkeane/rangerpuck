@@ -403,7 +403,9 @@ void drawRadar() {
 
   // ---- distance gauge: a bar that fills as it gets closer ----------------
   float live = sqrtf(plane.east*plane.east + plane.north*plane.north);
-  int gw = W() - 12, gx = 6, gy = H() - (land ? 46 : 56);
+  // gauge lifted 8px in landscape: the callsign row moved up to 130 and at
+  // text size 2 it is 16px tall, so the old bar at 126..132 ran into it.
+  int gw = W() - 12, gx = 6, gy = H() - (land ? 54 : 56);
   float frac = 1.0f - fminf(1.0f, live / radarRangeKm);      // 1.0 = overhead
   uint16_t gcol = live < 5 ? ST77XX_RED : live < 15 ? ST77XX_YELLOW : 0x07FF;
   tft.drawRect(gx, gy, gw, 7, 0x2945);
@@ -421,12 +423,19 @@ void drawRadar() {
   // Callsign and route SIDE BY SIDE on one line. Stacking them pushed the
   // callsign up into the colour bar; they belong together anyway — "who" and
   // "where to" are one thought.
+  // Landscape bottom stack, 8px-aligned and all ON SCREEN (H()=172, rows 0..171):
+  //   callsign  H()-42 = 130  size2 -> 130..145
+  //   routefull H()-24 = 148  size1 -> 148..155
+  //   airline   H()-16 = 156  size1 -> 156..163
+  //   alt/trend H()-8  = 164  size1 -> 164..171
+  // The old stack was 34/18/8/0, so the alt/trend line sat at y=172 and every
+  // glyph was silently discarded — that line had never once rendered.
   int ts = land ? 2 : 1, cw = land ? 12 : 6;
   tft.setTextSize(ts); tft.setTextColor(ST77XX_WHITE);
-  tft.setCursor(4, H() - (land ? 34 : 42)); tft.print(plane.callsign);
+  tft.setCursor(4, H() - (land ? 42 : 42)); tft.print(plane.callsign);
   if (plane.route.length()) {
     tft.setTextColor(0x07E0);                      // green, same line, one gap
-    tft.setCursor(4 + (plane.callsign.length() + 1) * cw, H() - (land ? 34 : 42));
+    tft.setCursor(4 + (plane.callsign.length() + 1) * cw, H() - (land ? 42 : 42));
     tft.print(plane.route);
   }
 
@@ -437,21 +446,21 @@ void drawRadar() {
     const String& rf = land ? plane.routefull : plane.routemid;
     if (rf.length()) {
       tft.setTextSize(1); tft.setTextColor(0x07E0);
-      tft.setCursor(4, H() - (land ? 18 : 30));
+      tft.setCursor(4, H() - (land ? 24 : 30));
       tft.print(rf);
     } else if (plane.routefull.length()) {
       tft.setTextSize(1); tft.setTextColor(0x07E0);   // older M3 sending only the wide one
-      tft.setCursor(4, H() - (land ? 18 : 30));
+      tft.setCursor(4, H() - (land ? 24 : 30));
       tft.print(plane.routefull.substring(0, land ? 52 : 28));
     }
   }
 
   tft.setTextSize(1); tft.setTextColor(0x7BEF);
-  tft.setCursor(4, H() - (land ? 8 : 20));
+  tft.setCursor(4, H() - (land ? 16 : 20));
   tft.printf("%s %s", plane.airline.length() ? plane.airline.c_str() : plane.type.c_str(),
              plane.airline.length() ? plane.type.c_str() : "");
 
-  tft.setCursor(4, H() - (land ? 0 : 10));
+  tft.setCursor(4, H() - (land ? 8 : 10));
   const char* trend = plane.vs > 200 ? "climbing" : plane.vs < -200 ? "descending" : "level";
   tft.setTextColor(plane.vs < -200 ? ST77XX_YELLOW : 0x7BEF);
   tft.printf("%ldft %s %.0fkt", (long)plane.alt, trend, plane.gs);
@@ -459,6 +468,9 @@ void drawRadar() {
   // ---- closest approach: the question you actually have -------------------
   if (plane.approaching && plane.eta >= 0) {
     tft.setTextColor(plane.cpa < 3 ? ST77XX_GREEN : 0x7BEF);
+    // was H()-16 in landscape = the routefull row; a 52-char route reaches
+    // x=316 and the right third was being overwritten. The airline line is
+    // short and left-aligned, so this row is free.
     tft.setCursor(W() - 96, H() - (land ? 16 : 8));
     tft.printf("CPA %.1fkm %dmin", plane.cpa, plane.eta);
   } else {
