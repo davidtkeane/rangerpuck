@@ -987,9 +987,17 @@ void setup() {
       "\nip: " + WiFi.localIP().toString() +
       "\nrssi: " + String(WiFi.RSSI()) + " dBm" +
       "\nuptime: " + String(millis()/1000) + "s" +
+      "\nwho: " + (curWho.length() ? curWho : String("-")) +
       "\nrot: " + String(rot) + (rot % 2 ? " (landscape)" : " (portrait)") +
       "\nscreen: " + String(ambientScreen) + "\ntime: " + (timeReady ? "synced" : "UNSET") +
       "\ncontacts: " + String(planeCount) + "\n";
+    for (int i = 0; i < MAX_AGENTS; i++) {
+      if (!agents[i].used) continue;
+      s += "agent[" + String(i) + "]: " + agents[i].who + " " + agents[i].state +
+           " (u" + String(urgency(agents[i].state)) + ", " +
+           String((millis() - agents[i].ms) / 1000) + "s ago)" +
+           (i == curSlot ? "  <- on screen" : "") + "\n";
+    }
     if (plane.valid) {
       s += "primary: " + plane.callsign + " " + plane.type + " " + plane.airline +
            "\n  route:     " + plane.route +

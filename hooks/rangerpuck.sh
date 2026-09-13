@@ -24,7 +24,12 @@ SEND="$HOME/esp32-projects/1-ranger-puck/tools/send.sh"
 # Identify. Without this every state lands in an anonymous slot, shows no colour
 # tag, and competes with anything sent manually as CLAUDE — two slots, same
 # agent, fighting over one screen.
-export PUCK_WHO=CLAUDE
+# Respect an identity the caller already set. This was hardcoded to CLAUDE, which
+# meant a SECOND machine running this same hook (the Kali box) had its states
+# filed under M3's CLAUDE slot — the two would overwrite each other and fight
+# over the screen, which is the exact fault the per-agent slots exist to prevent.
+# Set env.PUCK_WHO in that machine's ~/.claude/settings.json to name it.
+export PUCK_WHO="${PUCK_WHO:-CLAUDE}"
 [ -x "$SEND" ] || exit 0
 EVENT="${1:-}"
 STAMP="$HOME/.ranger-memory/config/.puck-last-prompt"
