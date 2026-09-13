@@ -17,6 +17,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <time.h>
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
@@ -41,7 +42,7 @@
 // an undeclared type fails with "'Look' does not name a type".
 // ---------------------------------------------------------------------------
 struct Look { uint16_t fg; uint8_t r, g, b; };
-struct Machine { String name; bool up; String detail; };
+struct Machine { String name; bool up; uint8_t st; String detail; };  // st: 0 down 1 awake 2 asleep
 
 Adafruit_ST7789 tft = Adafruit_ST7789(LCD_CS, LCD_DC, LCD_RST);
 Adafruit_NeoPixel led(1, RGB_PIN, NEO_GRB + NEO_KHZ800);
@@ -54,7 +55,7 @@ String curWho = "";
 // The board used to hold a single state, so whoever wrote last won. Claude has
 // automatic hooks firing every turn; Gemini writes only when it remembers. The
 // result was Claude silently clobbering Gemini's APPROVE while Gemini sat there
-// genuinely blocked — the request was never seen.
+// genuinely blocked — the user never saw the request.
 //
 // So the board now keeps a SLOT PER AGENT and renders the most URGENT one, not
 // the most recent. A request for a human always beats a progress update, no
@@ -66,6 +67,11 @@ struct AgentState {
   bool used = false;
 };
 AgentState agents[MAX_AGENTS];
+// Which slot is currently on screen. Expiry must age THAT agent's state by ITS
+// OWN clock: a global "last update" timestamp is reset by every other agent's
+// traffic, so a WAITING that nothing has refreshed sat on screen indefinitely
+// while a busier agent kept restarting its timer underneath.
+int curSlot = -1;
 
 int urgency(const String& st) {
   if (st == "APPROVE") return 100;   // a human is BLOCKING — always wins
@@ -86,14 +92,22 @@ void recordAndPick(const String& who, const String& st, const String& l1, const 
   for (int i = 0; i < MAX_AGENTS; i++) {
     if (agents[i].used && agents[i].who == key) { slot = i; break; }
     if (!agents[i].used && slot < 0) slot = i;
-    if (agents[i].ms < agents[oldest].ms) oldest = i;
+    // evict the LEAST URGENT, then the oldest — never drop a blocked agent to
+    // make room for a progress update
+    if (urgency(agents[i].state) < urgency(agents[oldest].state) ||
+        (urgency(agents[i].state) == urgency(agents[oldest].state) &&
+         agents[i].ms < agents[oldest].ms)) oldest = i;
   }
   if (slot < 0) slot = oldest;
   agents[slot] = {key, st, l1, l2, millis(), true};
 
   // forget an agent that has gone quiet, so a dead session cannot hold the screen
+  // NEVER forget a BLOCKED agent. One waiting for a human is silent BY
+  // DEFINITION — that is what waiting means. Pruning it broke the single promise
+  // this device makes, in exactly the case it exists for.
   for (int i = 0; i < MAX_AGENTS; i++)
-    if (agents[i].used && millis() - agents[i].ms > 600000UL) agents[i].used = false;
+    if (agents[i].used && urgency(agents[i].state) < 100
+        && millis() - agents[i].ms > 600000UL) agents[i].used = false;
 
   int best = -1;
   for (int i = 0; i < MAX_AGENTS; i++) {
@@ -105,6 +119,7 @@ void recordAndPick(const String& who, const String& st, const String& l1, const 
   if (best >= 0) {
     curState = agents[best].state; curL1 = agents[best].l1;
     curL2 = agents[best].l2;       curWho = agents[best].who;
+    curSlot = best;
   }
 }
 // When did the last state arrive? An agent that crashes, is killed, or simply
@@ -121,7 +136,7 @@ struct Plane {
   float east, north;     // km east / north of the house
   float track, gs;       // degrees true, knots
   int32_t alt;
-  String callsign, type, airline;
+  String callsign, type, airline, route, routefull;  // "TFS>EDI" and "TFS Tenerife > EDI Edinburgh"
   float dist = 0, cpa = 0;
   int eta = -1;             // minutes to closest approach, -1 if receding
   int vs = 0;               // ft/min: + climbing, - descending
@@ -140,14 +155,29 @@ float radarRangeKm = 40.0;
 // aircraft were being tracked the machine list never appeared again. Both are
 // ambient — neither is urgent — so when nothing needs a human they take turns.
 uint32_t ambientSwapMs = 0;
-bool showFleetNow = false;
 const uint32_t AMBIENT_SWAP = 12000UL;      // 12s each — long enough to read
+uint8_t ambientScreen = 0;                  // 0 planes · 1 fleet · 2 weather · 3 clock
+const uint8_t AMBIENT_COUNT = 4;
+bool timeReady = false;
+uint32_t lastNtpMs = 0;
+
+// --- weather, held for the ambient rotation ---------------------------------
+// Weather states were being PUSHED and losing every time: they scored 5 against
+// the radar's 18, so the screen with a guinea pig depending on it never showed.
+// Weather is not urgent, it is ambient — so it takes its turn instead of
+// competing. PIGS stays a real state at urgency 75 for when it is actually cold.
+struct Wx { String temp, cond, rain, pigs, place; bool valid=false; uint32_t ms=0; } wx;
 const uint32_t EXPIRE_WORKING = 8UL * 60UL * 1000UL;   // THINKING/RUNNING — work can be slow
 const uint32_t EXPIRE_SETTLED = 60UL * 1000UL;         // DONE/WAITING/ERROR/SKY — brief
+const uint32_t EXPIRE_NUDGE   = 22UL * 1000UL;         // WAITING — a nudge, not a status
+// WAITING says "your move". Once seen it has done its whole job, and leaving it
+// up just blocks the ambient screens behind it. Claude Code also re-fires its
+// idle notification periodically, which kept refreshing the timer and held the
+// screen for minutes.
 // APPROVE never expires: it means someone is genuinely blocked, and the user may be
 // out of the room for an hour. That one has to keep asking.        // CLAUDE / GEMINI / OLLAMA / WEATHER — any agent can drive this
 
-// Each agent gets its own colour so you can tell at a glance WHO is talking.
+// Each agent gets its own colour so the user can tell at a glance WHO is talking.
 uint16_t whoColour(const String& w) {
   if (w == "CLAUDE") return 0xFD20;   // orange
   if (w == "GEMINI") return 0x055F;   // blue
@@ -192,8 +222,7 @@ Look lookFor(const String& s) {
 
 
 // ============================================================================
-//  The mascot — a cat, because the user has three (Mammy, Kitty, and the tom who
-//  answers to "meow"). Drawn with primitives rather than a bitmap array so the
+//  The mascot — a cat, drawn from primitives. Drawn with primitives rather than a bitmap array so the
 //  expression can change per state without carrying six images in flash.
 //  Layout borrowed from the CrabPuck idea; the artwork is ours.
 // ============================================================================
@@ -370,15 +399,32 @@ void drawRadar() {
   tft.setCursor(W() - strlen(dbuf) * 12 - 6, gy - 26); tft.print(dbuf);
 
   // ---- identity and state, bottom-left -----------------------------------
-  tft.setTextSize(land ? 2 : 1); tft.setTextColor(ST77XX_WHITE);
-  tft.setCursor(4, H() - (land ? 34 : 40)); tft.print(plane.callsign);
+  // Callsign and route SIDE BY SIDE on one line. Stacking them pushed the
+  // callsign up into the colour bar; they belong together anyway — "who" and
+  // "where to" are one thought.
+  int ts = land ? 2 : 1, cw = land ? 12 : 6;
+  tft.setTextSize(ts); tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(4, H() - (land ? 34 : 42)); tft.print(plane.callsign);
+  if (plane.route.length()) {
+    tft.setTextColor(0x07E0);                      // green, same line, one gap
+    tft.setCursor(4 + (plane.callsign.length() + 1) * cw, H() - (land ? 34 : 42));
+    tft.print(plane.route);
+  }
+
+  // The route in full underneath — code AND city, so the codes get learned.
+  // Small text, but the panel is wide enough for it in landscape.
+  if (plane.routefull.length()) {
+    tft.setTextSize(1); tft.setTextColor(0x07E0);
+    tft.setCursor(4, H() - (land ? 18 : 30));
+    tft.print(plane.routefull.substring(0, land ? 52 : 28));
+  }
 
   tft.setTextSize(1); tft.setTextColor(0x7BEF);
-  tft.setCursor(4, H() - (land ? 16 : 28));
+  tft.setCursor(4, H() - (land ? 8 : 20));
   tft.printf("%s %s", plane.airline.length() ? plane.airline.c_str() : plane.type.c_str(),
              plane.airline.length() ? plane.type.c_str() : "");
 
-  tft.setCursor(4, H() - (land ? 6 : 18));
+  tft.setCursor(4, H() - (land ? 0 : 10));
   const char* trend = plane.vs > 200 ? "climbing" : plane.vs < -200 ? "descending" : "level";
   tft.setTextColor(plane.vs < -200 ? ST77XX_YELLOW : 0x7BEF);
   tft.printf("%ldft %s %.0fkt", (long)plane.alt, trend, plane.gs);
@@ -427,6 +473,115 @@ void drawPlaneScreen() {
   led.setPixelColor(0, led.Color(0, 60, 90)); led.show();
 }
 
+// A clock must not depend on a laptop being awake — that is exactly when you
+// would glance at it. So the board keeps its own time: NTP at boot, then its
+// internal clock, re-synced every 6 hours.
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);   // Europe/Dublin, DST handled
+  tzset();
+  struct tm t;
+  for (int i = 0; i < 20 && !getLocalTime(&t, 500); i++) delay(100);
+  timeReady = getLocalTime(&t, 100);
+  lastNtpMs = millis();
+  if (timeReady) Serial.printf("time synced: %02d:%02d\n", t.tm_hour, t.tm_min);
+  else           Serial.println("NTP failed — clock will be wrong");
+}
+
+void drawClock() {
+  struct tm t;
+  tft.fillScreen(ST77XX_BLACK);
+  if (!timeReady || !getLocalTime(&t, 50)) {
+    tft.setTextColor(0x7BEF); tft.setTextSize(2);
+    tft.setCursor(8, H()/2 - 8); tft.println("no time");
+    return;
+  }
+  bool land = (rot % 2);
+  int cx = land ? 84 : W()/2;
+  int cy = land ? H()/2 : 104;
+  int r  = (land ? H()/2 : 72) - 10;
+
+  // face
+  tft.drawCircle(cx, cy, r,     0x39C7);
+  tft.drawCircle(cx, cy, r - 1, 0x18E3);
+  for (int i = 0; i < 12; i++) {
+    float a = i * 30.0f * 3.14159265f / 180.0f;
+    int x1 = cx + sinf(a) * (r - 4),  y1 = cy - cosf(a) * (r - 4);
+    int x2 = cx + sinf(a) * (r - (i % 3 == 0 ? 10 : 6));
+    int y2 = cy - cosf(a) * (r - (i % 3 == 0 ? 10 : 6));
+    tft.drawLine(x1, y1, x2, y2, i % 3 == 0 ? ST77XX_WHITE : 0x5AEB);
+  }
+
+  auto hand = [&](float deg, int len, uint16_t col, int w) {
+    float a = deg * 3.14159265f / 180.0f;
+    int x = cx + sinf(a) * len, y = cy - cosf(a) * len;
+    tft.drawLine(cx, cy, x, y, col);
+    if (w > 1) {                       // thicken by drawing neighbours
+      tft.drawLine(cx + 1, cy, x, y, col);
+      tft.drawLine(cx, cy + 1, x, y, col);
+    }
+  };
+  float hd = (t.tm_hour % 12) * 30.0f + t.tm_min * 0.5f;
+  float md = t.tm_min * 6.0f + t.tm_sec * 0.1f;
+  float sd = t.tm_sec * 6.0f;
+  hand(hd, r * 0.50f, ST77XX_WHITE,  2);
+  hand(md, r * 0.78f, 0xC618,        2);
+  hand(sd, r * 0.88f, ST77XX_RED,    1);
+  tft.fillCircle(cx, cy, 3, ST77XX_RED);
+
+  // digital, beside it in landscape and beneath in portrait
+  char hhmm[6], dayname[12], datestr[20];
+  strftime(hhmm,    sizeof hhmm,    "%H:%M",    &t);
+  strftime(dayname, sizeof dayname, "%A",       &t);   // full day — Saturday, not Sat
+  strftime(datestr, sizeof datestr, "%d %B %Y", &t);   // 13 September 2026
+  tft.setTextColor(ST77XX_WHITE);
+  if (land) {
+    tft.setTextSize(4); tft.setCursor(172, 34);  tft.print(hhmm);
+    tft.setTextSize(2); tft.setTextColor(0x07FF);
+    tft.setCursor(174, 76);  tft.print(dayname);
+    tft.setTextSize(1); tft.setTextColor(0xC618);
+    tft.setCursor(174, 98);  tft.print(datestr);
+    tft.setTextColor(0x7BEF);
+    tft.setCursor(174, 112); tft.printf(":%02d", t.tm_sec);
+  } else {
+    tft.setTextSize(4); tft.setCursor(14, 200); tft.print(hhmm);
+    tft.setTextSize(2); tft.setTextColor(0x07FF);
+    tft.setCursor(14, 242); tft.print(dayname);
+    tft.setTextSize(1); tft.setTextColor(0xC618);
+    tft.setCursor(14, 266); tft.print(datestr);
+  }
+  led.setPixelColor(0, led.Color(4, 4, 8)); led.show();
+}
+
+void drawWeather() {
+  bool land = (rot % 2);
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+
+  tft.setTextColor(0x07FF); tft.setTextSize(2);
+  tft.setCursor(6, 6); tft.println(wx.place.length() ? wx.place : "WEATHER");
+  tft.drawFastHLine(0, 28, W(), 0x07FF);
+
+  tft.setTextColor(ST77XX_WHITE); tft.setTextSize(land ? 5 : 4);
+  tft.setCursor(8, land ? 44 : 48); tft.print(wx.temp);
+
+  tft.setTextSize(2); tft.setTextColor(0xC618);
+  tft.setCursor(land ? 150 : 8, land ? 56 : 100); tft.println(wx.cond.substring(0, land ? 9 : 13));
+
+  // rain chance — the number you actually want before going out
+  tft.setTextSize(2); tft.setTextColor(0x5D9F);
+  tft.setCursor(land ? 150 : 8, land ? 84 : 128); tft.print(wx.rain);
+
+  // the pigs, if they need anything
+  if (wx.pigs.length()) {
+    bool bad = wx.pigs.indexOf("TOO") >= 0 || wx.pigs.indexOf("cold") >= 0;
+    tft.fillRect(0, H() - (land ? 30 : 44), W(), land ? 22 : 24, bad ? ST77XX_RED : 0x0320);
+    tft.setTextSize(land ? 2 : 1); tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(6, H() - (land ? 26 : 40)); tft.print(wx.pigs);
+  }
+  led.setPixelColor(0, led.Color(0, 30, 40)); led.show();
+}
+
 void drawFleet() {
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextWrap(false);
@@ -450,7 +605,8 @@ void drawFleet() {
     int y = y0 + row * rowH;
     if (!fleet[i].up) anyDown = true;
 
-    tft.fillCircle(x + 8, y + 8, 6, fleet[i].up ? ST77XX_GREEN : ST77XX_RED);
+    tft.fillCircle(x + 8, y + 8, 6, fleet[i].st == 1 ? ST77XX_GREEN
+                                  : fleet[i].st == 2 ? 0xFD20 : ST77XX_RED);
     tft.setTextSize(2); tft.setTextColor(ST77XX_WHITE);
     tft.setCursor(x + 22, y);
     tft.println(fleet[i].name.substring(0, land ? 6 : 5));
@@ -470,9 +626,24 @@ void drawFleet() {
 }
 
 void draw() {
-  if (curState == "RADAR") { drawRadar(); return; }
-  if (curState == "PLANE") { drawPlaneScreen(); return; }
-  if (curState == "IDLE" && fleetCount > 0) { drawFleet(); return; }
+  // AMBIENT ROTATION — the four screens that show when nothing needs a human.
+  // This dispatch is what makes the rotation real: for three releases the swap
+  // timer incremented ambientScreen while draw() ignored it entirely, so the
+  // weather screen was DEAD CODE and the fleet view was unreachable whenever
+  // any aircraft was in range. Both were reported as working.
+  if (curState == "RADAR" || curState == "IDLE") {
+    bool have[AMBIENT_COUNT] = { planeCount > 0, fleetCount > 0, wx.valid, timeReady };
+    for (int i = 0; i < AMBIENT_COUNT; i++) {      // skip screens with no data
+      uint8_t k = (ambientScreen + i) % AMBIENT_COUNT;
+      if (!have[k]) continue;
+      ambientScreen = k;
+      if      (k == 0) drawRadar();
+      else if (k == 1) drawFleet();
+      else if (k == 2) drawWeather();
+      else             drawClock();
+      return;
+    }
+  }
 
   Look k = lookFor(curState);
   tft.fillScreen(ST77XX_BLACK);
@@ -565,6 +736,20 @@ void handleState() {
   server.send(200, "text/plain", "ok\n");
 }
 
+void handleWeather() {
+  if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
+  wx.temp  = (const char*)(doc["temp"]  | "--");
+  wx.cond  = (const char*)(doc["cond"]  | "");
+  wx.rain  = (const char*)(doc["rain"]  | "");
+  wx.pigs  = (const char*)(doc["pigs"]  | "");
+  wx.place = (const char*)(doc["place"] | "");
+  wx.valid = true; wx.ms = millis();
+  if (curState == "RADAR" || curState == "IDLE") draw();
+  server.send(200, "text/plain", "ok\n");
+}
+
 void handlePlane() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
   JsonDocument doc;
@@ -575,6 +760,7 @@ void handlePlane() {
     server.send(200, "text/plain", "cleared\n"); return;
   }
   radarRangeKm = doc["range"] | 40.0f;
+  if (radarRangeKm < 1.0f) radarRangeKm = 40.0f;   // guard: /0 in drawRadar
   planeCount = 0;
   for (JsonObject o : doc["planes"].as<JsonArray>()) {
     if (planeCount >= MAX_PLANES) break;
@@ -588,6 +774,7 @@ void handlePlane() {
     q.callsign = (const char*)(o["cs"]      | "?");
     q.type     = (const char*)(o["type"]    | "");
     q.airline  = (const char*)(o["airline"] | "");
+    q.route    = (const char*)(o["route"]   | "");
     q.valid = true; q.lastMs = millis();
     planeCount++;
   }
@@ -595,7 +782,7 @@ void handlePlane() {
   else plane.valid = false;
 
   // The radar is ambient information. It must never push aside an agent that is
-  // actually blocked waiting for a human — the same clobbering fault the per-agent
+  // actually blocked waiting for the user — the same clobbering fault the per-agent
   // slots fixed, and it would have come straight back in through this endpoint.
   recordAndPick("PLANE", "RADAR", "", "");
   lastStateMs = millis();
@@ -615,6 +802,7 @@ void handleFleet() {
     if (fleetCount >= MAX_MACHINES) break;
     fleet[fleetCount].name   = (const char*)(m["name"]   | "?");
     fleet[fleetCount].up     = m["up"] | false;
+    fleet[fleetCount].st     = m["state"] | (m["up"] ? 1 : 0);
     fleet[fleetCount].detail = (const char*)(m["detail"] | "");
     fleetCount++;
   }
@@ -683,7 +871,10 @@ void setup() {
     tft.setCursor(6, 150); tft.println("check");
     tft.setCursor(6, 175); tft.println("secrets.h");
     led.setPixelColor(0, led.Color(255, 0, 0)); led.show();
-    return;
+    // do NOT return — loop() retries Wi-Fi, but if the server was never started
+    // the board rejoins the network deaf until someone power-cycles it. After a
+    // power cut the router usually boots slower than the puck, so this is the
+    // NORMAL case, not an edge case.
   }
 
   Serial.print("connected, IP "); Serial.println(WiFi.localIP());
@@ -697,6 +888,7 @@ void setup() {
   server.on("/state", handleState);
   server.on("/fleet", handleFleet);
   server.on("/plane", handlePlane);
+  server.on("/weather", handleWeather);
   server.on("/rotate", handleRotate);
   server.on("/mascot", handleMascot);
   server.on("/", []() {
@@ -706,6 +898,7 @@ void setup() {
   });
   server.begin();
   Serial.println("http server up on :80");
+  syncTime();
 
   curState = "IDLE"; curL1 = "ready"; curL2 = "rangerpuck";
   draw();
@@ -715,16 +908,23 @@ void loop() {
   server.handleClient();
 
   // --- alternate the two ambient screens ----------------------------------
-  if ((curState == "RADAR" || curState == "IDLE") && fleetCount > 0 && planeCount > 0) {
+  if (curState == "RADAR" || curState == "IDLE") {
     if (millis() - ambientSwapMs > AMBIENT_SWAP) {
       ambientSwapMs = millis();
-      showFleetNow = !showFleetNow;
+      ambientScreen = (ambientScreen + 1) % AMBIENT_COUNT;
       draw();
     }
   }
 
+  // --- second hand, and a periodic NTP re-sync -----------------------------
+  if ((curState == "RADAR" || curState == "IDLE") && ambientScreen == 3 && timeReady) {
+    static uint32_t lastSec = 0;
+    if (millis() - lastSec >= 1000) { lastSec = millis(); drawClock(); }
+  }
+  if (timeReady && millis() - lastNtpMs > 6UL * 3600UL * 1000UL) syncTime();
+
   // --- move the aircraft between API updates so it CRAWLS, never jumps -----
-  if (curState == "RADAR" && planeCount && !showFleetNow) {
+  if (curState == "RADAR" && planeCount && ambientScreen == 0) {
     // 400ms meant a full-screen repaint two and a half times a second, which
     // reads as flashing from across a room. At 20km an aircraft moves about 200m
     // a second — a pixel or two — so redrawing that often showed nothing new and
@@ -768,14 +968,31 @@ void loop() {
   }
 
   // --- expire a stale state and fall back to the fleet view -----------------
-  if (lastStateMs && curState != "IDLE" && curState != "APPROVE") {
+  if (curSlot >= 0 && agents[curSlot].used
+      && curState != "IDLE" && curState != "APPROVE") {
     bool working = (curState == "THINKING" || curState == "RUNNING" || curState == "SYNC");
-    uint32_t limit = working ? EXPIRE_WORKING : EXPIRE_SETTLED;
-    if (millis() - lastStateMs > limit) {
-      Serial.printf("state '%s' expired after %lus — back to fleet\n",
-                    curState.c_str(), (millis() - lastStateMs) / 1000);
-      curState = "IDLE"; curL1 = "ready"; curL2 = ""; curWho = "";
-      lastStateMs = 0;
+    uint32_t limit = working            ? EXPIRE_WORKING
+                   : curState == "WAITING" ? EXPIRE_NUDGE
+                   : curState == "SKY"     ? EXPIRE_NUDGE * 3   // an ISS pass is ~6 min
+                                           : EXPIRE_SETTLED;
+    if (millis() - agents[curSlot].ms > limit) {
+      Serial.printf("expired '%s' (%s)\n", curState.c_str(), curWho.c_str());
+      // "What is shown" and "what is known" were mutated separately: an expired
+      // state stayed in its slot and was re-picked by the next POST from anyone,
+      // flashing back every 20s and eating fresher lower-urgency states.
+      agents[curSlot].used = false;
+      curSlot = -1;
+      int nx = -1;
+      for (int i = 0; i < MAX_AGENTS; i++) {
+        if (!agents[i].used) continue;
+        if (nx < 0 || urgency(agents[i].state) > urgency(agents[nx].state)) nx = i;
+      }
+      if (nx >= 0) {
+        curState = agents[nx].state; curL1 = agents[nx].l1;
+        curL2 = agents[nx].l2; curWho = agents[nx].who; curSlot = nx;
+      } else {
+        curState = "IDLE"; curL1 = "ready"; curL2 = ""; curWho = "";
+      }
       draw();
     }
   }

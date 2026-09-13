@@ -4,6 +4,77 @@ All notable changes, milestones, architectural decisions, and agent integrations
 
 ---
 
+## [1.6.0] — 2026-09-13 — The release where the changelog stopped lying
+
+An independent audit of the whole display system found that **this changelog was a record
+of intentions, not of the firmware that was actually flashed.** Six fixes claimed in 1.4.0
+and 1.5.0 had never landed. Every one is verified present in this release by testing the
+condition, not by searching for a word.
+
+### 🔴 Six claimed fixes that were never applied
+
+* **"`APPROVE` never expires" — the single promise this device makes — was FALSE.** The
+  10-minute slot prune had no exemption. An agent waiting for a human is silent **by
+  definition**, so with the radar posting every 20s a blocked agent vanished at exactly
+  10:00 — precisely the "out of the room" case the feature exists for. Claimed fixed in
+  1.4.0.
+* **Slot eviction was oldest-first**, so a blocked agent could be evicted to make room for
+  a progress update. Claimed fixed in 1.4.0.
+* **A failed first Wi-Fi connect still returned before `server.begin()`.** After a power cut
+  the router boots slower than the puck, so the board rejoined the network **deaf** until
+  manually power-cycled. That is the normal case, not an edge case. Claimed fixed in 1.4.0.
+* **`range: 0` divide-by-zero** in `drawRadar`, unguarded. Claimed fixed in 1.4.0.
+* **The four-screen rotation was fiction.** The swap timer incremented `ambientScreen` while
+  `draw()` ignored it entirely. `drawWeather()` had **zero call sites — the weather screen
+  was dead code, never once drawn.** The fleet view was unreachable whenever any aircraft
+  was in range, which over Dublin is nearly always: the exact bug 1.5.0 celebrates fixing,
+  reintroduced by the refactor that claimed to fix it.
+* **`weather.py` crashed on any live Met Éireann warning** — `warnings_rss()` returns a list,
+  the display still called `.get()` on it. It would die on exactly the cold and stormy days
+  when the guinea pig alert matters, and the scheduled job swallowed the traceback.
+
+**Root cause:** each was a `str.replace` matching a pattern an earlier edit in the same
+session had already changed, followed by an unconditional success message. One later
+assertion was too weak — it matched the *usage* just added rather than the *declaration*,
+and passed while the code was still broken. **Assert the condition that matters, or verify
+by behaviour after deploying. Grep proves a word exists; it does not prove the code does
+anything.**
+
+### Fixed — the structural seam
+
+"What is shown" (`curState`) and "what is known" (the slot table) were mutated
+**independently**. Every zombie state, every 20-second flash, every resurrected message
+traced to that one seam: expiry changed the display but left the slot alive, so the next POST
+from anyone re-picked the corpse — and a zombie at urgency 40 would eat a fresh `DONE` at 15.
+Expiry now clears the slot and re-runs the pick. Four lines.
+
+### Fixed — weather appeared twice
+
+`weather.py` pushed the ambient screen **and** a `DRY`/`SUN`/`RAIN` state card: two
+mechanisms doing one job. Now one screen. Only `PIGS` remains a state — an alert, not
+information. Cold enough to hurt an animal should interrupt, not wait its turn.
+
+### Added
+* **Flight routes on the radar.** ADS-B does not broadcast a destination; adsb.lol publishes
+  a separate route endpoint. The board shows `EIN56V BCN>DUB` beside the callsign and
+  `BCN Barcelona > DUB Dublin` underneath, so the codes get learned. Cached, primary
+  aircraft only — one extra request per poll against a free community API.
+  *A bug worth naming: the first version cached the **timeout**, so a slow first call meant
+  that flight never showed a destination again. "I could not ask" is not "there is no
+  route" — the third time in one day that absence of data became a confident claim.*
+* **Three fleet dot colours**: green awake, **amber asleep but answering**, red genuinely
+  gone. Two colours for three situations meant one of them had to lie. A machine with no
+  database is not asleep either — "no answer to *that* question" is not "no answer".
+* **Clock**: full day name and date, NTP with a POSIX TZ string so DST needs no maintenance.
+* **`puckrefresh`**: the board holds everything in RAM and cannot ask for data, so a reflash
+  leaves three screens blank until something pushes. The scheduled job now refreshes all four.
+
+### Removed
+`showFleetNow`, `lastStateMs`, and the orphaned single-plane screen — dead code the audit
+found still being written to and never read.
+
+---
+
 ## [1.5.0] — 2026-09-12 (Night) — Three bugs only a human could find
 
 Everything here was found by the user sitting in front of the device with a watch, not
@@ -141,8 +212,8 @@ day it is right.**
 * **Gemini Agent Integration:**
   * Created `GEMINI.md` defining the operational protocol for Gemini models in Antigravity IDE and `agy` CLI.
   * Identity assigned: `PUCK_WHO=GEMINI` with custom **blue** UI theme on the ST7789 display.
-  * Installed permanent agent rules in `~/.gemini/antigravity-cli/rules/rangerpuck.md` and `/Users/ranger/scripts/.agents/rules/rangerpuck.md`.
-  * Verified live transmission over Wi-Fi to puck at `192.168.1.12`.
+  * Installed permanent agent rules in `~/.gemini/antigravity-cli/rules/rangerpuck.md` and `<your-project>/.agents/rules/rangerpuck.md`.
+  * Verified live transmission over Wi-Fi to puck at `rangerpuck.local`.
 * **Outlandish Ideas Expansion (`IDEAS.md`):**
   * Added Section D with 6 creative concepts:
     1. Garda Air Support / Irish Coast Guard emergency helicopter radar (ADS-B).

@@ -1,7 +1,7 @@
 # 🎖️ RangerPuck — cheat sheet
 
 Waveshare ESP32-C6-LCD-1.47 · the little Ranger on the desk
-Project: `~/esp32-projects/1-ranger-puck` · Board: `192.168.1.12` / `rangerpuck.local`
+Project: `<this repo>` · Board: `rangerpuck.local` / `rangerpuck.local`
 
 ## Aliases (type these anywhere)
 
@@ -46,7 +46,7 @@ Project: `~/esp32-projects/1-ranger-puck` · Board: `192.168.1.12` / `rangerpuck
 
 | what | where |
 |------|-------|
-| Project + brief | `~/esp32-projects/1-ranger-puck/CLAUDE.md` |
+| Project + brief | `<this repo>/CLAUDE.md` |
 | Firmware | `RangerPuck/RangerPuck.ino` |
 | **Confirmed pinout** | `docs/PINOUT.md` ← never guess these |
 | Wi-Fi credentials | `RangerPuck/secrets.h` (gitignored; other sketches symlink to it) |
@@ -59,17 +59,17 @@ Project: `~/esp32-projects/1-ranger-puck` · Board: `192.168.1.12` / `rangerpuck
 ## Talking to the board directly
 
 ```bash
-curl http://192.168.1.12/                      # status
+curl http://rangerpuck.local/                      # status
 curl -X POST -d '{"state":"APPROVE","line1":"needs a yes"}' \
-     http://192.168.1.12/state                 # set a state
-curl http://192.168.1.12/rotate                # cycle orientation
-curl http://192.168.1.12/mascot                # toggle helmet/cat
+     http://rangerpuck.local/state                 # set a state
+curl http://rangerpuck.local/rotate                # cycle orientation
+curl http://rangerpuck.local/mascot                # toggle helmet/cat
 ```
 
 ## Rebuilding the logo
 
 ```bash
-cd ~/esp32-projects/1-ranger-puck
+cd <this repo>
 .venv/bin/python tools/make-logo.py <any-2-tone.png> [width]
 puckflash
 ```
