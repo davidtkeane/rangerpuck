@@ -2,7 +2,7 @@
 # Switch the puck's mascot.  ./tools/mascot.sh        toggle
 #                            ./tools/mascot.sh 0      Ranger helmet
 #                            ./tools/mascot.sh 1      cat
-CACHE="${XDG_CONFIG_HOME:-$HOME/.config}/rangerpuck/ip"
+CACHE="$HOME/.ranger-memory/config/rangerpuck.ip"
 for h in "${PUCK_HOST:-rangerpuck.local}" "$(cat "$CACHE" 2>/dev/null)"; do
   [ -z "$h" ] && continue
   if [ -n "${1:-}" ]; then

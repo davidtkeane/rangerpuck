@@ -1,0 +1,9 @@
+# Tooling only — the FIRMWARE has no Python dependency and the board needs none
+# of this. These are for the two host-side helpers:
+#   make-logo.py  needs Pillow   (PNG -> 1-bit bitmap header)
+#   monitor.sh    needs pyserial (serial console)
+#
+# Recreate with:
+#   python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+pillow>=12.0
+pyserial>=3.5

@@ -174,7 +174,7 @@ the network permanently unreachable; `range: 0` dividing by zero in `drawRadar`;
 * **Per-agent state slots.** The board previously held ONE state, so whoever wrote last won.
   Claude Code's hooks fire automatically every turn; Gemini writes only when it chooses to.
   The result: Claude silently clobbering Gemini's `APPROVE` while Gemini sat genuinely
-  blocked, and the user never saw the request. The board now keeps a slot per agent (max 4) and
+  blocked, and David never saw the request. The board now keeps a slot per agent (max 4) and
   renders the **most urgent**, not the most recent. A human being blocked always wins.
 * **Board-side state expiry.** Agents crash, get killed, or forget. Settled states
   (`DONE`/`WAITING`/`ERROR`) expire after 3 minutes, working states
@@ -212,8 +212,8 @@ day it is right.**
 * **Gemini Agent Integration:**
   * Created `GEMINI.md` defining the operational protocol for Gemini models in Antigravity IDE and `agy` CLI.
   * Identity assigned: `PUCK_WHO=GEMINI` with custom **blue** UI theme on the ST7789 display.
-  * Installed permanent agent rules in `~/.gemini/antigravity-cli/rules/rangerpuck.md` and `<your-project>/.agents/rules/rangerpuck.md`.
-  * Verified live transmission over Wi-Fi to puck at `rangerpuck.local`.
+  * Installed permanent agent rules in `~/.gemini/antigravity-cli/rules/rangerpuck.md` and `/Users/ranger/scripts/.agents/rules/rangerpuck.md`.
+  * Verified live transmission over Wi-Fi to puck at `192.168.1.12`.
 * **Outlandish Ideas Expansion (`IDEAS.md`):**
   * Added Section D with 6 creative concepts:
     1. Garda Air Support / Irish Coast Guard emergency helicopter radar (ADS-B).
@@ -237,7 +237,7 @@ day it is right.**
 * **Universal Agent Protocol (`AGENTS.md`):**
   * Created a context-free, cold-start protocol document readable by any LLM (Claude, Gemini, Ollama, Qwen, OpenClaw).
   * Standardized payload schema: `{"state": "...", "line1": "...", "line2": "...", "who": "..."}`.
-  * Established the **Golden Rule of Amber**: `APPROVE` (amber) is reserved strictly for hard blockers where the user is needed. `WAITING` (teal) is used for turn completion.
+  * Established the **Golden Rule of Amber**: `APPROVE` (amber) is reserved strictly for hard blockers where David is needed. `WAITING` (teal) is used for turn completion.
 * **Agent Personalities & Theme Colors:**
   * `CLAUDE` (Orange)
   * `GEMINI` (Blue)

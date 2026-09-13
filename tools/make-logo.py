@@ -6,9 +6,7 @@ and costs a few hundred bytes instead of tens of kilobytes.
 """
 import sys, os
 from PIL import Image
-if len(sys.argv) < 2:
-    sys.exit("usage: make-logo.py <image.png> [width]   (any 2-tone image)")
-SRC = sys.argv[1]
+SRC = sys.argv[1] if len(sys.argv) > 1 else "/Users/ranger/scripts/Github_David/HollywoodSaver/images/ranger.png"
 W   = int(sys.argv[2]) if len(sys.argv) > 2 else 72
 OUT = os.path.join(os.path.dirname(__file__), "..", "RangerPuck", "ranger_logo.h")
 im = Image.open(SRC).convert("L")

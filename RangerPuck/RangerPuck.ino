@@ -55,7 +55,7 @@ String curWho = "";
 // The board used to hold a single state, so whoever wrote last won. Claude has
 // automatic hooks firing every turn; Gemini writes only when it remembers. The
 // result was Claude silently clobbering Gemini's APPROVE while Gemini sat there
-// genuinely blocked — the user never saw the request.
+// genuinely blocked — David never saw the request.
 //
 // So the board now keeps a SLOT PER AGENT and renders the most URGENT one, not
 // the most recent. A request for a human always beats a progress update, no
@@ -160,6 +160,18 @@ uint8_t ambientScreen = 0;                  // 0 planes · 1 fleet · 2 weather 
 const uint8_t AMBIENT_COUNT = 4;
 bool timeReady = false;
 uint32_t lastNtpMs = 0;
+// Was the clock ever set? NTP used to be attempted ONCE in setup(), and the
+// periodic re-sync in loop() was gated on `timeReady` — which only syncTime()
+// itself sets. So a board that booted before the router was up never tried
+// again: the clock screen read "no time" for the WHOLE uptime and draw() dropped
+// it from the rotation permanently. setup()'s own comment calls a slow router the
+// NORMAL case after a power cut, so this was the common path, not an edge case.
+const uint32_t NTP_RETRY = 60UL * 1000UL;          // keep asking while unset
+const uint32_t NTP_REFRESH = 6UL * 3600UL * 1000UL;// and top up every 6h once set
+bool mdnsUp = false;        // mDNS is registered once and never re-announced;
+                            // after a reconnect or an IP change the name goes
+                            // dead until a power cycle. Re-announce instead.
+bool wasConnected = false;
 
 // --- weather, held for the ambient rotation ---------------------------------
 // Weather states were being PUSHED and losing every time: they scored 5 against
@@ -174,10 +186,10 @@ const uint32_t EXPIRE_NUDGE   = 22UL * 1000UL;         // WAITING — a nudge, n
 // up just blocks the ambient screens behind it. Claude Code also re-fires its
 // idle notification periodically, which kept refreshing the timer and held the
 // screen for minutes.
-// APPROVE never expires: it means someone is genuinely blocked, and the user may be
+// APPROVE never expires: it means someone is genuinely blocked, and David may be
 // out of the room for an hour. That one has to keep asking.        // CLAUDE / GEMINI / OLLAMA / WEATHER — any agent can drive this
 
-// Each agent gets its own colour so the user can tell at a glance WHO is talking.
+// Each agent gets its own colour so David can tell at a glance WHO is talking.
 uint16_t whoColour(const String& w) {
   if (w == "CLAUDE") return 0xFD20;   // orange
   if (w == "GEMINI") return 0x055F;   // blue
@@ -191,6 +203,7 @@ uint16_t whoColour(const String& w) {
 #define MAX_MACHINES 6
 Machine fleet[MAX_MACHINES];
 int fleetCount = 0;
+int fleetDropped = 0;          // machines the board could not fit — shown, not hidden
 String fleetStamp = "";
 
 // --- orientation -----------------------------------------------------------
@@ -222,7 +235,8 @@ Look lookFor(const String& s) {
 
 
 // ============================================================================
-//  The mascot — a cat, drawn from primitives. Drawn with primitives rather than a bitmap array so the
+//  The mascot — a cat, because David has three (Mammy, Kitty, and the tom who
+//  answers to "meow"). Drawn with primitives rather than a bitmap array so the
 //  expression can change per state without carrying six images in flash.
 //  Layout borrowed from the CrabPuck idea; the artwork is ours.
 // ============================================================================
@@ -476,14 +490,29 @@ void drawPlaneScreen() {
 // A clock must not depend on a laptop being awake — that is exactly when you
 // would glance at it. So the board keeps its own time: NTP at boot, then its
 // internal clock, re-synced every 6 hours.
+// Register (or re-register) mDNS. Safe to call repeatedly: end() then begin().
+void startMdns() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (mdnsUp) MDNS.end();
+  mdnsUp = MDNS.begin(PUCK_HOSTNAME);
+  if (mdnsUp) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("mDNS up: http://%s.local\n", PUCK_HOSTNAME);
+  } else {
+    Serial.println("mDNS failed — reach the board by IP until it retries");
+  }
+}
+
 void syncTime() {
+  lastNtpMs = millis();                       // stamp the ATTEMPT, not the success,
+                                              // so a failure backs off too
+  if (WiFi.status() != WL_CONNECTED) { Serial.println("NTP skipped — no wifi"); return; }
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);   // Europe/Dublin, DST handled
   tzset();
   struct tm t;
   for (int i = 0; i < 20 && !getLocalTime(&t, 500); i++) delay(100);
   timeReady = getLocalTime(&t, 100);
-  lastNtpMs = millis();
   if (timeReady) Serial.printf("time synced: %02d:%02d\n", t.tm_hour, t.tm_min);
   else           Serial.println("NTP failed — clock will be wrong");
 }
@@ -620,6 +649,14 @@ void drawFleet() {
   tft.setTextSize(1); tft.setTextColor(0x7BEF);
   tft.setCursor(6, barY + 8);
   tft.print(fleetStamp);
+  // Say so when the list does not fit. handleFleet() breaks at MAX_MACHINES, and
+  // a silently dropped machine reads as "no such machine" — the opposite of what
+  // a fleet monitor is for.
+  if (fleetDropped > 0) {
+    tft.setTextColor(0xFD20);
+    tft.setCursor(W() - 52, barY + 8);
+    tft.printf("+%d more", fleetDropped);
+  }
 
   led.setPixelColor(0, anyDown ? led.Color(120,0,0) : led.Color(0,18,0));
   led.show();
@@ -721,8 +758,19 @@ void showBoot(const char* msg) {
   tft.setCursor(6, 110); tft.println(msg);
 }
 
+// A body too large to be a legitimate state. There is no authentication on this
+// board (deliberate — see README), so the one thing worth defending is the heap:
+// a 200KB POST on a part with 320KB of RAM is a reset, not a bug report.
+const size_t MAX_BODY = 4096;
+bool bodyTooBig() {
+  if (server.arg("plain").length() <= MAX_BODY) return false;
+  server.send(413, "text/plain", "body too large\n");
+  return true;
+}
+
 void handleState() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  if (bodyTooBig()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
   recordAndPick((const char*)(doc["who"]   | ""),
@@ -738,6 +786,7 @@ void handleState() {
 
 void handleWeather() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  if (bodyTooBig()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
   wx.temp  = (const char*)(doc["temp"]  | "--");
@@ -752,6 +801,7 @@ void handleWeather() {
 
 void handlePlane() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  if (bodyTooBig()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
   if (doc["clear"] | false) {
@@ -782,7 +832,7 @@ void handlePlane() {
   else plane.valid = false;
 
   // The radar is ambient information. It must never push aside an agent that is
-  // actually blocked waiting for the user — the same clobbering fault the per-agent
+  // actually blocked waiting for David — the same clobbering fault the per-agent
   // slots fixed, and it would have come straight back in through this endpoint.
   recordAndPick("PLANE", "RADAR", "", "");
   lastStateMs = millis();
@@ -792,14 +842,15 @@ void handlePlane() {
 
 void handleFleet() {
   if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  if (bodyTooBig()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
 
   fleetStamp = doc["stamp"] | "";
   JsonArray arr = doc["machines"];
-  fleetCount = 0;
+  fleetCount = 0; fleetDropped = 0;
   for (JsonObject m : arr) {
-    if (fleetCount >= MAX_MACHINES) break;
+    if (fleetCount >= MAX_MACHINES) { fleetDropped++; continue; }
     fleet[fleetCount].name   = (const char*)(m["name"]   | "?");
     fleet[fleetCount].up     = m["up"] | false;
     fleet[fleetCount].st     = m["state"] | (m["up"] ? 1 : 0);
@@ -877,13 +928,15 @@ void setup() {
     // NORMAL case, not an edge case.
   }
 
-  Serial.print("connected, IP "); Serial.println(WiFi.localIP());
-  Serial.printf("RSSI %d dBm\n", WiFi.RSSI());
-
-  if (MDNS.begin(PUCK_HOSTNAME)) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.printf("mDNS up: http://%s.local\n", PUCK_HOSTNAME);
+  if (WiFi.status() == WL_CONNECTED) {
+    // Only claim this when it is true. The old code printed "connected, IP
+    // 0.0.0.0" immediately after announcing WIFI FAILED — actively misleading at
+    // exactly the moment you are staring at the serial monitor.
+    Serial.print("connected, IP "); Serial.println(WiFi.localIP());
+    Serial.printf("RSSI %d dBm\n", WiFi.RSSI());
+    wasConnected = true;
   }
+  startMdns();
 
   server.on("/state", handleState);
   server.on("/fleet", handleFleet);
@@ -921,7 +974,9 @@ void loop() {
     static uint32_t lastSec = 0;
     if (millis() - lastSec >= 1000) { lastSec = millis(); drawClock(); }
   }
-  if (timeReady && millis() - lastNtpMs > 6UL * 3600UL * 1000UL) syncTime();
+  // Keep asking until the clock is set, then just top it up. The old condition
+  // was `timeReady && ...`, which could only ever run AFTER a success.
+  if (millis() - lastNtpMs > (timeReady ? NTP_REFRESH : NTP_RETRY)) syncTime();
 
   // --- move the aircraft between API updates so it CRAWLS, never jumps -----
   if (curState == "RADAR" && planeCount && ambientScreen == 0) {
@@ -930,8 +985,14 @@ void loop() {
     // a second — a pixel or two — so redrawing that often showed nothing new and
     // cost a flicker. One second is smooth and calm.
     static uint32_t lastTick = 0;
+    // lastTick started at 0, so the FIRST tick computed dt = the board's entire
+    // uptime in seconds. An hour of uptime gave dt ~3600: at 400kt that flung the
+    // icon thousands of km on one frame. The `fresh` check below bounds how STALE
+    // the fix may be, not how big dt may be — so it did not help here.
+    if (!lastTick) lastTick = millis();
     if (millis() - lastTick > 1000) {
       float dt = (millis() - lastTick) / 1000.0f;
+      if (dt > 5.0f) dt = 5.0f;              // belt and braces after any stall
       lastTick = millis();
       // Extrapolate only as far as the data can justify. A jet at 400kt covers
       // 7km a minute, so running dead reckoning until the 3-minute drop-out
@@ -999,5 +1060,14 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {   // reconnect quietly if the router blips
     static uint32_t last = 0;
     if (millis() - last > 10000) { last = millis(); WiFi.reconnect(); }
+    wasConnected = false;
+  } else if (!wasConnected) {
+    // Just (re)joined. Re-announce mDNS — the record is tied to the address we
+    // had, so after a lease change rangerpuck.local pointed at nothing. And take
+    // the chance to set the clock if it is still unset.
+    wasConnected = true;
+    Serial.print("wifi up, IP "); Serial.println(WiFi.localIP());
+    startMdns();
+    if (!timeReady) syncTime();
   }
 }

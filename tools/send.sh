@@ -14,31 +14,31 @@
 # them. So: try the name, fall back to the last IP that worked, and cache
 # whatever succeeds. Self-healing, no hard-coded address in the source.
 set -uo pipefail
-CACHE="${XDG_CONFIG_HOME:-$HOME/.config}/rangerpuck/ip"
+CACHE="$HOME/.ranger-memory/config/rangerpuck.ip"
 NAME="${PUCK_HOST:-rangerpuck.local}"
 STATE="${1:-IDLE}"; L1="${2:-}"; L2="${3:-}"
 # WHO is speaking — any agent can drive this board. Set PUCK_WHO in the caller's
 # environment (CLAUDE / GEMINI / OLLAMA / QWEN / WEATHER) or pass it as $4.
 WHO="${4:-${PUCK_WHO:-}}"
-# Build the JSON with python rather than printf: a quote in the text used to
-# produce invalid JSON, and curl still exited 0 on the board's 400, so the script
-# cheerfully reported success while the board had rejected it.
-payload=$(STATE="$STATE" L1="$L1" L2="$L2" WHO="$WHO" python3 -c '
-import json, os
-print(json.dumps({k.lower(): os.environ[k] for k in ("STATE","L1","L2","WHO")}
-                 |> (lambda d: {"state": d["state"], "line1": d["l1"],
-                                "line2": d["l2"], "who": d["who"]})))' 2>/dev/null) || \
-payload=$(STATE="$STATE" L1="$L1" L2="$L2" WHO="$WHO" python3 -c '
-import json, os
-print(json.dumps({"state": os.environ["STATE"], "line1": os.environ["L1"],
-                  "line2": os.environ["L2"], "who": os.environ["WHO"]}))')
+# Build the JSON with jq, not printf. printf '%s' pasted the strings in RAW, so a
+# single quote, backslash or newline anywhere in line1/line2 produced invalid
+# JSON: the board answered 400, try() swallowed it with >/dev/null, and the state
+# VANISHED with no error anywhere. The hook feeds this arbitrary text — tool
+# names, notification messages, file paths — so it was a matter of time.
+#   ./send.sh ERROR 'cannot open "notes.txt"'     <- used to be silently dropped
+if command -v jq >/dev/null 2>&1; then
+  payload=$(jq -cn --arg s "$STATE" --arg a "$L1" --arg b "$L2" --arg w "$WHO" \
+            '{state:$s,line1:$a,line2:$b,who:$w}')
+else
+  # jq absent: escape by hand rather than emit JSON that will be rejected.
+  esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t'; }
+  payload=$(printf '{"state":"%s","line1":"%s","line2":"%s","who":"%s"}' \
+            "$(esc "$STATE")" "$(esc "$L1")" "$(esc "$L2")" "$(esc "$WHO")")
+fi
 
-try() {  # try <host> -> 0 only if the board actually ACCEPTED it (HTTP 200)
-  local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \
-         -X POST -H 'Content-Type: application/json' \
-         -d "$payload" "http://$1/state" 2>/dev/null)
-  [ "$code" = "200" ]
+try() {  # try <host> -> 0 if it accepted the state
+  curl -s --max-time 1 -X POST -H 'Content-Type: application/json' \
+       -d "$payload" "http://$1/state" >/dev/null 2>&1
 }
 
 # 1. LAST KNOWN GOOD IP FIRST.
@@ -58,16 +58,40 @@ fi
 # 2. the mDNS name, for a first run or after the board moves
 if try "$NAME"; then echo "→ $STATE ${L1} ${L2}  (via mDNS)"; exit 0; fi
 
-# 3. sweep the subnet for something that answers as a RangerPuck
-base=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en6 2>/dev/null)
-base="${base%.*}"
+# 3. sweep the subnet for something that answers as a RangerPuck.
+#    Was `seq 2 60` x `--max-time 1` = up to 58 SECONDS of blocking, and it never
+#    looked past .60 so a later DHCP lease could not be found at all. Now the
+#    whole usable range is probed in PARALLEL BATCHES with a short timeout, so the
+#    worst case is a couple of seconds instead of a minute. That matters because a
+#    hook fires this on every tool call: when the board was off, the old version
+#    stacked up minute-long background sweeps.
+#    The stamp file stops a dead board being swept for on every single call.
+SWEPT="$HOME/.ranger-memory/config/.puck-swept"
 if [ -n "$base" ]; then
-  for i in $(seq 2 60); do
-    if curl -s --max-time 1 "http://$base.$i/" 2>/dev/null | grep -q RangerPuck; then
-      mkdir -p "$(dirname "$CACHE")"; echo "$base.$i" > "$CACHE"
-      try "$base.$i" && { echo "→ $STATE ${L1} ${L2}  (found at $base.$i, cached)"; exit 0; }
+  if [ -f "$SWEPT" ]; then
+    age=$(( $(date +%s) - $(stat -f %m "$SWEPT" 2>/dev/null || echo 0) ))
+    if [ "$age" -lt 60 ]; then
+      echo "puck unreachable — swept ${age}s ago, not sweeping again yet" >&2; exit 1
     fi
+  fi
+  mkdir -p "$(dirname "$CACHE")"; : > "$SWEPT"
+  found=""
+  for lo in 2 66 130 194; do
+    hi=$(( lo + 63 )); [ "$hi" -gt 254 ] && hi=254
+    hits=$(
+      for i in $(seq "$lo" "$hi"); do
+        ( curl -s --max-time 1 "http://$base.$i/" 2>/dev/null \
+            | grep -q RangerPuck && printf '%s\n' "$base.$i" ) &
+      done
+      wait
+    )
+    found=$(printf '%s' "$hits" | head -1)
+    [ -n "$found" ] && break
   done
+  if [ -n "$found" ]; then
+    printf '%s\n' "$found" > "$CACHE"
+    try "$found" && { echo "→ $STATE ${L1} ${L2}  (found at $found, cached)"; exit 0; }
+  fi
 fi
 echo "puck unreachable — is it powered and on Wi-Fi?" >&2
 exit 1

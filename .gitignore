@@ -3,4 +3,6 @@ build/
 *.bin
 *.elf
 .DS_Store
-__pycache__/
+
+.venv/
+WifiDiag/secrets.h

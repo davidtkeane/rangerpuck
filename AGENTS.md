@@ -1,13 +1,13 @@
 # Driving the RangerPuck — for any AI agent
 
 Hand this file to Claude, Gemini, Ollama, Qwen, OpenClaw or anything else. It is all
-you need. The board sits on your user's desk and shows what you are doing, so they know
+you need. The board is on David's desk and shows what you are doing, so he knows
 without watching your terminal.
 
 ## One command
 
 ```bash
-./tools/send.sh <STATE> "<line1>" "<line2>" <WHO>
+~/esp32-projects/1-ranger-puck/tools/send.sh <STATE> "<line1>" "<line2>" <WHO>
 ```
 
 Or set `PUCK_WHO` once in your environment and drop the 4th argument.
@@ -23,7 +23,7 @@ send.sh DONE     "finished"
 
 | state | colour | use it when |
 |-------|--------|-------------|
-| `APPROVE` | 🟠 amber | **you are BLOCKED and need your user to say yes** — use sparingly |
+| `APPROVE` | 🟠 amber | **you are BLOCKED and need David to say yes** — use sparingly |
 | `WAITING` | 🩵 teal | you are finished, ball is in his court, nothing blocked |
 | `THINKING` | 🔵 blue | reasoning, reading, searching |
 | `RUNNING` | 🔵 blue | a tool or command is executing — put its name in line1 |
@@ -32,7 +32,7 @@ send.sh DONE     "finished"
 | `IDLE` | ⚪ dim | nothing doing — the board falls back to the fleet view |
 
 **The one rule that matters: do not overuse `APPROVE`.** Amber is the only signal that
-says "your user is needed". If it fires when nothing is blocked, he learns to ignore it
+says "David is needed". If it fires when nothing is blocked, he learns to ignore it
 within a week, and then it is useless on the day it matters. Use `WAITING` for
 "I'm done, over to you".
 
@@ -40,9 +40,9 @@ within a week, and then it is useless on the day it matters. Use `WAITING` for
 
 This is the one thing agents get wrong, and it defeats the whole point of the board.
 
-When your harness stops to ask your user *"accept this file edit? 1. Yes 2. No"*, **you are
+When your harness stops to ask David *"accept this file edit? 1. Yes 2. No"*, **you are
 suspended.** You cannot send anything at that moment — you are not running. If you wait
-until you are blocked to report being blocked, the board never hears about it, and your user
+until you are blocked to report being blocked, the board never hears about it, and David
 sits in another tab while you sit waiting for him.
 
 So send it **first**:
@@ -56,7 +56,7 @@ send.sh RUNNING "applying"                # after he answers
 Any action you expect to be gated — a file write, a shell command, anything irreversible —
 gets an `APPROVE` **before** it, not after. If the approval turns out not to be needed,
 your next state overwrites it a second later and no harm is done. A false amber that
-clears itself instantly costs nothing; a silent block costs your user the whole point of the
+clears itself instantly costs nothing; a silent block costs David the whole point of the
 device.
 
 Agents WITH automatic hooks (Claude Code fires on its `Notification` event) do not need to
@@ -95,7 +95,7 @@ IP and then sweeping the subnet. Prefer the script.
 - **Do not poll it** or send a state more than once a second.
 - **Say nothing secret.** Anything sent appears on a screen in a room, and is readable by
   anything on the LAN over plain HTTP.
-- **Do not reflash the firmware** unless your user asks. Other agents depend on it.
+- **Do not reflash the firmware** unless David asks. Other agents depend on it.
 
 ## You do not have to tidy up
 
@@ -104,7 +104,7 @@ itself — after **3 minutes** for `DONE` / `WAITING` / `ERROR`, **8 minutes** f
 `RUNNING` / `SYNC`.
 
 `APPROVE` is the exception and **never expires**: it means someone is genuinely blocked and
-your user may be out of the room for an hour. That one keeps asking until it is answered or
+David may be out of the room for an hour. That one keeps asking until it is answered or
 replaced.
 
 So you cannot leave the board lying by crashing, being killed, or forgetting to send a final
@@ -113,7 +113,7 @@ state. Send `DONE` when you finish if you like — it looks good — but you are
 ## Checking it is alive
 
 ```bash
-curl -s http://rangerpuck.local/ || curl -s "http://$(cat ~/.config/rangerpuck/ip)/"
+curl -s http://rangerpuck.local/ || curl -s "http://$(cat ~/.ranger-memory/config/rangerpuck.ip)/"
 ```
 
 Returns state, IP, signal strength and uptime as plain text.

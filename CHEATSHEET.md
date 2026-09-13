@@ -1,7 +1,15 @@
 # 🎖️ RangerPuck — cheat sheet
 
 Waveshare ESP32-C6-LCD-1.47 · the little Ranger on the desk
-Project: `<this repo>` · Board: `rangerpuck.local` / `rangerpuck.local`
+Project: `~/esp32-projects/1-ranger-puck` · Board: `rangerpuck.local`, or the cached address
+
+```bash
+PUCK=$(cat ~/.ranger-memory/config/rangerpuck.ip 2>/dev/null || echo rangerpuck.local)
+```
+
+Every `curl` below uses `$PUCK`. The address is NOT hardcoded anywhere in the code —
+DHCP moves it, which is the whole reason `send.sh` caches and self-heals. Don't paste a
+literal IP into anything that outlives the lease.
 
 ## Aliases (type these anywhere)
 
@@ -46,7 +54,7 @@ Project: `<this repo>` · Board: `rangerpuck.local` / `rangerpuck.local`
 
 | what | where |
 |------|-------|
-| Project + brief | `<this repo>/CLAUDE.md` |
+| Project + brief | `~/esp32-projects/1-ranger-puck/CLAUDE.md` |
 | Firmware | `RangerPuck/RangerPuck.ino` |
 | **Confirmed pinout** | `docs/PINOUT.md` ← never guess these |
 | Wi-Fi credentials | `RangerPuck/secrets.h` (gitignored; other sketches symlink to it) |
@@ -59,17 +67,17 @@ Project: `<this repo>` · Board: `rangerpuck.local` / `rangerpuck.local`
 ## Talking to the board directly
 
 ```bash
-curl http://rangerpuck.local/                      # status
+curl http://$PUCK/                      # status
 curl -X POST -d '{"state":"APPROVE","line1":"needs a yes"}' \
-     http://rangerpuck.local/state                 # set a state
-curl http://rangerpuck.local/rotate                # cycle orientation
-curl http://rangerpuck.local/mascot                # toggle helmet/cat
+     http://$PUCK/state                 # set a state
+curl http://$PUCK/rotate                # cycle orientation
+curl http://$PUCK/mascot                # toggle helmet/cat
 ```
 
 ## Rebuilding the logo
 
 ```bash
-cd <this repo>
+cd ~/esp32-projects/1-ranger-puck
 .venv/bin/python tools/make-logo.py <any-2-tone.png> [width]
 puckflash
 ```

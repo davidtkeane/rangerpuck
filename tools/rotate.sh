@@ -4,7 +4,7 @@
 #   ./tools/rotate.sh 1          landscape   (320x172)
 #   ./tools/rotate.sh 0          portrait    (172x320)
 #   ./tools/rotate.sh 3          landscape, upside down (cable on the other side)
-CACHE="${XDG_CONFIG_HOME:-$HOME/.config}/rangerpuck/ip"
+CACHE="$HOME/.ranger-memory/config/rangerpuck.ip"
 HOST="${PUCK_HOST:-rangerpuck.local}"
 reach() { curl -s --max-time 3 "$@" ; }
 for h in "$HOST" "$(cat "$CACHE" 2>/dev/null)"; do
