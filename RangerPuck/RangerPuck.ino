@@ -136,7 +136,12 @@ struct Plane {
   float east, north;     // km east / north of the house
   float track, gs;       // degrees true, knots
   int32_t alt;
-  String callsign, type, airline, route, routefull;  // "TFS>EDI" and "TFS Tenerife > EDI Edinburgh"
+  // "TFS>EDI", then the same route spelled out at two widths:
+  //   routefull  <=52 chars for landscape — "YUL Montreal, CA > CDG Paris, FR"
+  //   routemid   <=28 chars for portrait  — "YUL Montreal > CDG Paris"
+  // M3 picks the wording for each budget and DEGRADES (drops the country, then a
+  // city) rather than letting the board chop a name mid-word.
+  String callsign, type, airline, route, routefull, routemid;
   float dist = 0, cpa = 0;
   int eta = -1;             // minutes to closest approach, -1 if receding
   int vs = 0;               // ft/min: + climbing, - descending
@@ -425,12 +430,20 @@ void drawRadar() {
     tft.print(plane.route);
   }
 
-  // The route in full underneath — code AND city, so the codes get learned.
-  // Small text, but the panel is wide enough for it in landscape.
-  if (plane.routefull.length()) {
-    tft.setTextSize(1); tft.setTextColor(0x07E0);
-    tft.setCursor(4, H() - (land ? 18 : 30));
-    tft.print(plane.routefull.substring(0, land ? 52 : 28));
+  // The route spelled out underneath — code, city AND country, so a bare "CFU"
+  // becomes somewhere you can picture. Pick the variant sized for this rotation;
+  // M3 has already degraded it to fit, so no truncation is needed here.
+  {
+    const String& rf = land ? plane.routefull : plane.routemid;
+    if (rf.length()) {
+      tft.setTextSize(1); tft.setTextColor(0x07E0);
+      tft.setCursor(4, H() - (land ? 18 : 30));
+      tft.print(rf);
+    } else if (plane.routefull.length()) {
+      tft.setTextSize(1); tft.setTextColor(0x07E0);   // older M3 sending only the wide one
+      tft.setCursor(4, H() - (land ? 18 : 30));
+      tft.print(plane.routefull.substring(0, land ? 52 : 28));
+    }
   }
 
   tft.setTextSize(1); tft.setTextColor(0x7BEF);
@@ -825,6 +838,12 @@ void handlePlane() {
     q.type     = (const char*)(o["type"]    | "");
     q.airline  = (const char*)(o["airline"] | "");
     q.route    = (const char*)(o["route"]   | "");
+    // These two were the missing link. The struct had `routefull`, drawRadar()
+    // already printed it — but nothing ever parsed it out of the JSON, so it was
+    // permanently "" and the expanded route silently never appeared. spotter.py
+    // had been sending it the whole time.
+    q.routefull = (const char*)(o["routefull"] | "");
+    q.routemid  = (const char*)(o["routemid"]  | "");
     q.valid = true; q.lastMs = millis();
     planeCount++;
   }
@@ -945,9 +964,26 @@ void setup() {
   server.on("/rotate", handleRotate);
   server.on("/mascot", handleMascot);
   server.on("/", []() {
-    server.send(200, "text/plain",
-      "RangerPuck\nstate: " + curState + "\nip: " + WiFi.localIP().toString() +
-      "\nrssi: " + String(WiFi.RSSI()) + " dBm\nuptime: " + String(millis()/1000) + "s\n");
+    // Report what the board BELIEVES it is showing, not just that it is alive.
+    // Without this, "did the expanded route arrive?" could only be answered by
+    // walking over and looking at a 1.47" screen — which is how routefull sat
+    // unparsed and unnoticed in the first place. A status endpoint that cannot be
+    // used to diagnose the thing it reports on is decoration.
+    String s = "RangerPuck\nstate: " + curState +
+      "\nip: " + WiFi.localIP().toString() +
+      "\nrssi: " + String(WiFi.RSSI()) + " dBm" +
+      "\nuptime: " + String(millis()/1000) + "s" +
+      "\nrot: " + String(rot) + (rot % 2 ? " (landscape)" : " (portrait)") +
+      "\nscreen: " + String(ambientScreen) + "\ntime: " + (timeReady ? "synced" : "UNSET") +
+      "\ncontacts: " + String(planeCount) + "\n";
+    if (plane.valid) {
+      s += "primary: " + plane.callsign + " " + plane.type + " " + plane.airline +
+           "\n  route:     " + plane.route +
+           "\n  routefull: " + plane.routefull +
+           "\n  routemid:  " + plane.routemid +
+           "\n  showing:   " + ((rot % 2) ? plane.routefull : plane.routemid) + "\n";
+    }
+    server.send(200, "text/plain", s);
   });
   server.begin();
   Serial.println("http server up on :80");
