@@ -73,6 +73,45 @@ when() {      # clock time the wait began — "16:17 · 8m 37s" tells you more t
   date -r "$s" +%H:%M 2>/dev/null || date -d "@$s" +%H:%M 2>/dev/null || date +%H:%M
 }
 
+
+# --- what is it ACTUALLY doing? ---------------------------------------------
+# The board used to say THINKING "working" and RUNNING "Bash" — a literal string
+# and a tool name. Neither tells you anything: every turn looked identical, so
+# the screen stopped carrying information and became a busy-light. The payload
+# has had the real detail in it all along, tool_input just was never read.
+#
+# Keep it SHORT: line1 renders at text size 2 and fits ~18 characters.
+squash() {   # squash <text> <maxlen> — collapse whitespace, strip noise, clip
+  printf '%s' "$1" | tr '\n\t' '  ' | tr -s ' ' \
+    | sed -e 's/^ *//' -e 's/ *$//' | cut -c1-"${2:-18}"
+}
+
+detail_for() {   # detail_for <tool_name> <payload> -> a human-readable summary
+  local tool="$1" p="$2" d=""
+  case "$tool" in
+    Bash)
+      # the command minus any leading env assignments and sudo, first 3 words:
+      # "git push origin main" -> "git push origin"
+      d=$(printf '%s' "$p" | jq -r '.tool_input.command // empty' 2>/dev/null \
+          | sed -e 's/^ *sudo  *//' -e 's/^[A-Z_][A-Z0-9_]*=[^ ]*  *//g' \
+          | awk '{print $1, $2, $3}') ;;
+    WebSearch)        d=$(printf '%s' "$p" | jq -r '.tool_input.query // empty' 2>/dev/null) ;;
+    WebFetch)         # `\?` is a GNU-sed extension and does nothing on BSD sed, so the
+                      # scheme survived and 's|/.*||' then clipped it to "https:".
+                      # POSIX character class works on both.
+                      d=$(printf '%s' "$p" | jq -r '.tool_input.url // empty' 2>/dev/null \
+                          | sed -e 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' -e 's|/.*||') ;;
+    Read|Edit|Write|NotebookEdit)
+                      d=$(printf '%s' "$p" | jq -r '.tool_input.file_path // empty' 2>/dev/null \
+                          | sed 's|.*/||') ;;                       # basename only
+    Grep|Glob)        d=$(printf '%s' "$p" | jq -r '.tool_input.pattern // empty' 2>/dev/null) ;;
+    Task|Agent)       d=$(printf '%s' "$p" | jq -r '.tool_input.description // empty' 2>/dev/null) ;;
+    *)                d="" ;;
+  esac
+  [ -z "$d" ] && d="$tool"
+  squash "$d" 18
+}
+
 case "$EVENT" in
   Notification)
     # Claude Code fires Notification for TWO different things and they deserve
@@ -93,10 +132,16 @@ case "$EVENT" in
     esac ;;
   UserPromptSubmit)
     date +%s > "$STAMP" 2>/dev/null
-    "$SEND" THINKING "working" "$ctx_line" >/dev/null 2>&1 & ;;
+    # show what was ASKED, not the word "working" — that is the one thing that
+    # actually identifies this turn from across the room.
+    ask=$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null)
+    "$SEND" THINKING "$(squash "${ask:-working}" 18)" "$ctx_line" >/dev/null 2>&1 & ;;
   PreToolUse)
     tool=$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)
-    "$SEND" RUNNING "${tool:-working}" "$(elapsed)" >/dev/null 2>&1 & ;;
+    # line1 = what it is doing, line2 = which tool + how long. "git push origin"
+    # beats "Bash" every time.
+    "$SEND" RUNNING "$(detail_for "$tool" "$payload")" \
+            "$(squash "${tool} $(elapsed)" 18)" >/dev/null 2>&1 & ;;
   Stop)
     # The delayed IDLE used to fire unconditionally after 45s. Submit a new prompt
     # inside that window and the late IDLE landed AFTER the new THINKING, in the
