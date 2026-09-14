@@ -164,8 +164,8 @@ float radarRangeKm = 40.0;
 // ambient — neither is urgent — so when nothing needs a human they take turns.
 uint32_t ambientSwapMs = 0;
 const uint32_t AMBIENT_SWAP = 12000UL;      // 12s each — long enough to read
-uint8_t ambientScreen = 0;                  // 0 planes · 1 fleet · 2 weather · 3 clock
-const uint8_t AMBIENT_COUNT = 4;
+uint8_t ambientScreen = 0;                  // 0 planes · 1 fleet · 2 weather · 3 clock · 4 pig-run
+const uint8_t AMBIENT_COUNT = 5;
 bool timeReady = false;
 uint32_t lastNtpMs = 0;
 // Was the clock ever set? NTP used to be attempted ONCE in setup(), and the
@@ -187,6 +187,8 @@ bool wasConnected = false;
 // Weather is not urgent, it is ambient — so it takes its turn instead of
 // competing. PIGS stays a real state at urgency 75 for when it is actually cold.
 struct Wx { String temp, cond, rain, pigs, place; bool valid=false; uint32_t ms=0; } wx;
+// pig-run ambient screen data (pushed to /pig; rotates with the other ambients)
+struct PigRun { String state, l1, l2; bool valid=false; uint32_t ms=0; } prun;
 const uint32_t EXPIRE_WORKING = 8UL * 60UL * 1000UL;   // THINKING/RUNNING — work can be slow
 const uint32_t EXPIRE_SETTLED = 60UL * 1000UL;         // DONE/WAITING/ERROR/SKY — brief
 const uint32_t EXPIRE_NUDGE   = 22UL * 1000UL;         // WAITING — a nudge, not a status
@@ -579,9 +581,9 @@ void drawClock() {
   led.setPixelColor(0, led.Color(4, 4, 8)); led.show();
 }
 
-void drawPigRun() {
-  bool go   = (curState == "PIGGO");
-  bool soon = (curState == "PIGSOON");
+void drawPigRun(const String& state, const String& l1, const String& l2) {
+  bool go   = (state == "PIGGO");
+  bool soon = (state == "PIGSOON");
   uint16_t fg = go ? 0x07E0 : 0xF800;
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextWrap(false);
@@ -590,9 +592,9 @@ void drawPigRun() {
   tft.setTextColor(fg); tft.setTextSize(6);
   tft.setCursor(6, 40); tft.print(go ? "GO" : "WAIT");
   tft.setTextColor(ST77XX_WHITE); tft.setTextSize(2);
-  if (curL1.length()) { tft.setCursor(6, H() - 44); tft.println(curL1.substring(0, W()/12)); }
+  if (l1.length()) { tft.setCursor(6, H() - 44); tft.println(l1.substring(0, W()/12)); }
   tft.setTextColor(0xC618); tft.setTextSize(1);
-  if (curL2.length()) { tft.setCursor(6, H() - 20); tft.println(curL2.substring(0, W()/6)); }
+  if (l2.length()) { tft.setCursor(6, H() - 20); tft.println(l2.substring(0, W()/6)); }
   if (go)        led.setPixelColor(0, led.Color(0, 90, 0));
   else if (soon) led.setPixelColor(0, led.Color(120, 0, 0));
   else           led.setPixelColor(0, led.Color(60, 0, 0));
@@ -681,7 +683,7 @@ void drawFleet() {
 
 void draw() {
   if (curState == "PIGGO" || curState == "PIGWAIT" || curState == "PIGSOON") {
-    drawPigRun();
+    drawPigRun(curState, curL1, curL2);
     return;
   }
   // AMBIENT ROTATION — the four screens that show when nothing needs a human.
@@ -690,7 +692,7 @@ void draw() {
   // weather screen was DEAD CODE and the fleet view was unreachable whenever
   // any aircraft was in range. Both were reported as working.
   if (curState == "RADAR" || curState == "IDLE") {
-    bool have[AMBIENT_COUNT] = { planeCount > 0, fleetCount > 0, wx.valid, timeReady };
+    bool have[AMBIENT_COUNT] = { planeCount > 0, fleetCount > 0, wx.valid, timeReady, prun.valid };
     for (int i = 0; i < AMBIENT_COUNT; i++) {      // skip screens with no data
       uint8_t k = (ambientScreen + i) % AMBIENT_COUNT;
       if (!have[k]) continue;
@@ -698,7 +700,8 @@ void draw() {
       if      (k == 0) drawRadar();
       else if (k == 1) drawFleet();
       else if (k == 2) drawWeather();
-      else             drawClock();
+      else if (k == 3) drawClock();
+      else             drawPigRun(prun.state, prun.l1, prun.l2);
       return;
     }
   }
@@ -802,6 +805,19 @@ void handleState() {
   Serial.printf("state <- %s | %s | %s | %s\n", curState.c_str(), curL1.c_str(),
                 curL2.c_str(), curWho.c_str());
   draw();
+  server.send(200, "text/plain", "ok\n");
+}
+
+void handlePig() {
+  if (server.method() != HTTP_POST) { server.send(405, "text/plain", "POST only\n"); return; }
+  if (bodyTooBig()) return;
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "bad json\n"); return; }
+  prun.state = (const char*)(doc["state"] | "PIGWAIT");
+  prun.l1    = (const char*)(doc["line1"] | "");
+  prun.l2    = (const char*)(doc["line2"] | "");
+  prun.valid = true; prun.ms = millis();
+  if (curState == "RADAR" || curState == "IDLE") draw();
   server.send(200, "text/plain", "ok\n");
 }
 
@@ -969,6 +985,7 @@ void setup() {
   server.on("/fleet", handleFleet);
   server.on("/plane", handlePlane);
   server.on("/weather", handleWeather);
+  server.on("/pig", handlePig);
   server.on("/rotate", handleRotate);
   server.on("/mascot", handleMascot);
   server.on("/", []() {
