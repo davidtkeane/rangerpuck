@@ -60,7 +60,7 @@ String curWho = "";
 // So the board now keeps a SLOT PER AGENT and renders the most URGENT one, not
 // the most recent. A request for a human always beats a progress update, no
 // matter who spoke last or how loudly.
-#define MAX_AGENTS 4
+#define MAX_AGENTS 8   // was 4 — M3/M4/M5/KALI/MSI + PLANE/SKY/PIGS each want a slot
 struct AgentState {
   String who, state, l1, l2;
   uint32_t ms = 0;
@@ -208,6 +208,9 @@ uint16_t whoColour(const String& w) {
   if (w == "WEATHER")return 0x07FF;   // cyan
   if (w == "KALI")   return 0xFCE0;   // amber — Claude running on the Kali box
   if (w == "MSI")    return 0xA81F;   // violet — Claude on the MSI (Windows)
+  if (w == "M3")     return 0xFD20;   // orange — the M3 hub
+  if (w == "M4")     return 0xFFE0;   // yellow — the M4 Max
+  if (w == "M5")     return 0x07E0;   // green  — the M5 (EXO primary)
   if (w == "PLANE")  return 0x8410;   // dim grey — ambient radar, not an agent
   return 0xC618;                      // grey — unknown agent
 }
