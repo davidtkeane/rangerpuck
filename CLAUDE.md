@@ -194,3 +194,11 @@ tools/make-logo.py    any 2-tone PNG -> 1-bit header, with ASCII preview
 - **mDNS does not cross Ethernet↔Wi-Fi** on this router. Never hard-code the IP — cache
   and re-discover instead.
 - **Size-1 text is unreadable on a 1.47" panel.** Body size 2 minimum, state 3–4.
+
+---
+
+## 📐 System architecture
+
+**Read `docs/ARCHITECTURE.md` first** — the single authoritative overview of the whole
+system (endpoints, states, colours, the 5 ambient screens, collectors, launchd services, the
+fleet of Claudes M3/Kali/MSI, and the pig-run feature). Kept current; older docs may lag.
