@@ -207,6 +207,7 @@ uint16_t whoColour(const String& w) {
   if (w == "QWEN")   return 0xF81F;   // magenta
   if (w == "WEATHER")return 0x07FF;   // cyan
   if (w == "KALI")   return 0xFCE0;   // amber — Claude running on the Kali box
+  if (w == "MSI")    return 0xA81F;   // violet — Claude on the MSI (Windows)
   if (w == "PLANE")  return 0x8410;   // dim grey — ambient radar, not an agent
   return 0xC618;                      // grey — unknown agent
 }
