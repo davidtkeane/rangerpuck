@@ -76,7 +76,10 @@ int curSlot = -1;
 int urgency(const String& st) {
   if (st == "APPROVE") return 100;   // a human is BLOCKING — always wins
   if (st == "ERROR")   return 80;
-  if (st == "PIGS")    return 75;    // welfare
+  if (st == "PIGS")    return 75;    // welfare (temperature)
+  if (st == "PIGSOON") return 60;    // rain within 10min while a run is due — the loud flash
+  if (st == "PIGWAIT") return 48;    // no dry window now — steady red info
+  if (st == "PIGGO")   return 50;    // dry window open — green, go feed them
   if (st == "SKY")     return 45;   // go and look up — but nothing is blocked
   if (st == "WAITING") return 40;
   if (st == "RADAR")   return 18;   // ambient: beats a finished job, never live work
@@ -485,39 +488,6 @@ void drawRadar() {
   led.show();
 }
 
-void drawPlaneScreen() {
-  tft.fillScreen(ST77XX_BLACK);
-  tft.setTextWrap(false);
-  bool land = (rot % 2);
-
-  float hdg = 0; String alt = "", dst = "";
-  int p1 = curL2.indexOf('|'), p2 = curL2.lastIndexOf('|');
-  if (p1 > 0) {
-    alt = curL2.substring(0, p1);
-    dst = (p2 > p1) ? curL2.substring(p1 + 1, p2) : "";
-    hdg = curL2.substring(p2 + 1).toFloat();
-  }
-
-  uint16_t col = 0x07FF;                       // cyan
-  drawPlane(land ? 52 : 86, land ? 76 : 92, hdg, col, land ? 1.7f : 1.4f);
-
-  tft.setTextColor(col); tft.setTextSize(2);
-  tft.setCursor(land ? 112 : 6, land ? 40 : 150);
-  tft.println(curL1.substring(0, land ? 11 : 14));
-
-  tft.setTextSize(1); tft.setTextColor(ST77XX_WHITE);
-  tft.setCursor(land ? 114 : 6, land ? 68 : 176);  tft.println(alt);
-  tft.setCursor(land ? 114 : 6, land ? 84 : 190);  tft.println(dst);
-  tft.setTextColor(0x7BEF);
-  tft.setCursor(land ? 114 : 6, land ? 100 : 204); tft.printf("%.0f deg", hdg);
-
-  led.setPixelColor(0, led.Color(0, 60, 90)); led.show();
-}
-
-// A clock must not depend on a laptop being awake — that is exactly when you
-// would glance at it. So the board keeps its own time: NTP at boot, then its
-// internal clock, re-synced every 6 hours.
-// Register (or re-register) mDNS. Safe to call repeatedly: end() then begin().
 void startMdns() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mdnsUp) MDNS.end();
@@ -609,6 +579,26 @@ void drawClock() {
   led.setPixelColor(0, led.Color(4, 4, 8)); led.show();
 }
 
+void drawPigRun() {
+  bool go   = (curState == "PIGGO");
+  bool soon = (curState == "PIGSOON");
+  uint16_t fg = go ? 0x07E0 : 0xF800;
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextColor(0xFFE0); tft.setTextSize(2);
+  tft.setCursor(6, 6); tft.print("PIG RUN");
+  tft.setTextColor(fg); tft.setTextSize(6);
+  tft.setCursor(6, 40); tft.print(go ? "GO" : "WAIT");
+  tft.setTextColor(ST77XX_WHITE); tft.setTextSize(2);
+  if (curL1.length()) { tft.setCursor(6, H() - 44); tft.println(curL1.substring(0, W()/12)); }
+  tft.setTextColor(0xC618); tft.setTextSize(1);
+  if (curL2.length()) { tft.setCursor(6, H() - 20); tft.println(curL2.substring(0, W()/6)); }
+  if (go)        led.setPixelColor(0, led.Color(0, 90, 0));
+  else if (soon) led.setPixelColor(0, led.Color(120, 0, 0));
+  else           led.setPixelColor(0, led.Color(60, 0, 0));
+  led.show();
+}
+
 void drawWeather() {
   bool land = (rot % 2);
   tft.fillScreen(ST77XX_BLACK);
@@ -690,6 +680,10 @@ void drawFleet() {
 }
 
 void draw() {
+  if (curState == "PIGGO" || curState == "PIGWAIT" || curState == "PIGSOON") {
+    drawPigRun();
+    return;
+  }
   // AMBIENT ROTATION — the four screens that show when nothing needs a human.
   // This dispatch is what makes the rotation real: for three releases the swap
   // timer incremented ambientScreen while draw() ignored it entirely, so the
@@ -988,6 +982,7 @@ void setup() {
       "\nrssi: " + String(WiFi.RSSI()) + " dBm" +
       "\nuptime: " + String(millis()/1000) + "s" +
       "\nwho: " + (curWho.length() ? curWho : String("-")) +
+      "\nline1: " + curL1 + "\nline2: " + curL2 +
       "\nrot: " + String(rot) + (rot % 2 ? " (landscape)" : " (portrait)") +
       "\nscreen: " + String(ambientScreen) + "\ntime: " + (timeReady ? "synced" : "UNSET") +
       "\ncontacts: " + String(planeCount) + "\n";
@@ -1024,6 +1019,15 @@ void loop() {
       ambientSwapMs = millis();
       ambientScreen = (ambientScreen + 1) % AMBIENT_COUNT;
       draw();
+    }
+  }
+
+  if (curState == "PIGSOON") {
+    static uint32_t lastPulse = 0; static bool on = false;
+    if (millis() - lastPulse > 450) {
+      lastPulse = millis(); on = !on;
+      led.setPixelColor(0, on ? led.Color(200, 0, 0) : led.Color(10, 0, 0));
+      led.show();
     }
   }
 
