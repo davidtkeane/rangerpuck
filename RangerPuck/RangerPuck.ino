@@ -84,7 +84,9 @@ int urgency(const String& st) {
   if (st == "WAITING") return 40;
   if (st == "RADAR")   return 18;   // ambient: beats a finished job, never live work
   if (st == "SYNC" || st == "RUNNING" || st == "THINKING") return 20;
-  if (st == "DONE")    return 15;   // below RADAR on purpose — see above
+  if (st == "DONE")    return 19;   // ABOVE radar(18), below active work(20): so a
+                                    // finished turn is VISIBLE for its ~45s, then a new
+                                    // THINKING/RUNNING replaces it and radar resumes after.
   return 5;                          // IDLE and anything unknown
 }
 
