@@ -6,3 +6,7 @@ build/
 
 .venv/
 WifiDiag/secrets.h
+
+# ESP32 full-flash backups — contain Wi-Fi creds, never commit
+backups/
+*.bin
