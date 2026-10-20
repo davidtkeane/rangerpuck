@@ -2,7 +2,7 @@
 # ============================================================================
 #  rangerpuck.sh — drive the desk puck from Claude Code's own lifecycle.
 #
-#  CANONICAL COPY: ~/esp32-projects/1-ranger-puck/hooks/rangerpuck.sh
+#  CANONICAL COPY: ~/M4-Stuff/esp32-projects/1-ranger-puck/hooks/rangerpuck.sh
 #  ~/.claude/hooks/rangerpuck.sh is a SYMLINK to this file, so the 100 lines that
 #  make the amber light mean anything are version-controlled with the firmware
 #  they drive. Install on a new machine with tools/install-hooks.sh.
@@ -20,7 +20,11 @@
 #    Stop             -> DONE     green, then IDLE after 45s
 #    SessionStart     -> IDLE     dim
 # ============================================================================
-SEND="$HOME/esp32-projects/1-ranger-puck/tools/send.sh"
+# Where the project lives: ~/M4-Stuff on the M4 (moved there 2026-10-20),
+# ~/esp32-projects on the other Macs. Same file works on both.
+PUCK_DIR="$HOME/M4-Stuff/esp32-projects/1-ranger-puck"
+[ -d "$PUCK_DIR" ] || PUCK_DIR="$HOME/esp32-projects/1-ranger-puck"
+SEND="$PUCK_DIR/tools/send.sh"
 # Identify. Without this every state lands in an anonymous slot, shows no colour
 # tag, and competes with anything sent manually as CLAUDE — two slots, same
 # agent, fighting over one screen.
@@ -155,7 +159,7 @@ case "$EVENT" in
       if [ "$before" = "$after" ]; then
         "$SEND" IDLE "ready" "" >/dev/null 2>&1
       fi
-      "$HOME/esp32-projects/1-ranger-puck/tools/fleet-push.sh" >/dev/null 2>&1 ) & ;;
+      "$PUCK_DIR/tools/fleet-push.sh" >/dev/null 2>&1 ) & ;;
   SessionStart)
     "$SEND" IDLE "ready" "" >/dev/null 2>&1 & ;;
 esac

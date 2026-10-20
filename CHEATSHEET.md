@@ -1,7 +1,7 @@
 # 🎖️ RangerPuck — cheat sheet
 
 Waveshare ESP32-C6-LCD-1.47 · the little Ranger on the desk
-Project: `~/esp32-projects/1-ranger-puck` · Board: `rangerpuck.local`, or the cached address
+Project: `~/M4-Stuff/esp32-projects/1-ranger-puck` (M4) · `~/esp32-projects/1-ranger-puck` (M3 & others) · Board: `rangerpuck.local`, or the cached address
 
 ```bash
 PUCK=$(cat ~/.ranger-memory/config/rangerpuck.ip 2>/dev/null || echo rangerpuck.local)
@@ -46,7 +46,7 @@ literal IP into anything that outlives the lease.
 | `3-plane-spotter` | aircraft overhead, radar | 15–18 |
 | `4-sky-siren` | ISS and Starlink passes | 19–21 |
 
-**Adding a new one:** make `~/esp32-projects/N-name/`, read the location from
+**Adding a new one:** make `~/M4-Stuff/esp32-projects/N-name/`, read the location from
 `~/.config/rangerpuck/spotter.env` (**never hardcode it**), push states with
 `1-ranger-puck/tools/send.sh`, then add a menu entry and a line here.
 
@@ -54,7 +54,7 @@ literal IP into anything that outlives the lease.
 
 | what | where |
 |------|-------|
-| Project + brief | `~/esp32-projects/1-ranger-puck/CLAUDE.md` |
+| Project + brief | `~/M4-Stuff/esp32-projects/1-ranger-puck/CLAUDE.md` |
 | Firmware | `RangerPuck/RangerPuck.ino` |
 | **Confirmed pinout** | `docs/PINOUT.md` ← never guess these |
 | Wi-Fi credentials | `RangerPuck/secrets.h` (gitignored; other sketches symlink to it) |
@@ -77,7 +77,7 @@ curl http://$PUCK/mascot                # toggle helmet/cat
 ## Rebuilding the logo
 
 ```bash
-cd ~/esp32-projects/1-ranger-puck
+cd ~/M4-Stuff/esp32-projects/1-ranger-puck
 .venv/bin/python tools/make-logo.py <any-2-tone.png> [width]
 puckflash
 ```

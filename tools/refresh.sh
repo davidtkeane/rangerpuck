@@ -19,7 +19,8 @@
 #  report); stderr is the only thing that ever matters here.
 # ============================================================================
 set -uo pipefail
-E="$HOME/esp32-projects"
+E="$HOME/M4-Stuff/esp32-projects"        # the M4 keeps it in M4-Stuff
+[ -d "$E" ] || E="$HOME/esp32-projects"  # the other Macs
 CACHE="$HOME/.ranger-memory/config/rangerpuck.ip"
 QUIET=0; [ "${1:-}" = "--quiet" ] && QUIET=1
 

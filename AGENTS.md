@@ -7,8 +7,10 @@ without watching your terminal.
 ## One command
 
 ```bash
-~/esp32-projects/1-ranger-puck/tools/send.sh <STATE> "<line1>" "<line2>" <WHO>
+~/M4-Stuff/esp32-projects/1-ranger-puck/tools/send.sh <STATE> "<line1>" "<line2>" <WHO>
 ```
+On the M4 the project lives in `~/M4-Stuff/` (it's backed up to the 20TB from there).
+On the M3 and other Macs it is still `~/esp32-projects/1-ranger-puck`.
 
 Or set `PUCK_WHO` once in your environment and drop the 4th argument.
 

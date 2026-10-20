@@ -7,11 +7,12 @@ This file defines the exact protocol for Gemini to report status to the physical
 ## 1. Environment & Identity
 
 * **Identity:** `GEMINI` (displays in **blue**)
-* **Script:** `~/esp32-projects/1-ranger-puck/tools/send.sh`
+* **Script:** `~/M4-Stuff/esp32-projects/1-ranger-puck/tools/send.sh`
+  (that's the M4 path; on the M3 and other Macs it's `~/esp32-projects/1-ranger-puck/tools/send.sh`)
 
 ```bash
 export PUCK_WHO=GEMINI
-~/esp32-projects/1-ranger-puck/tools/send.sh <STATE> "<line1>" "<line2>" GEMINI
+~/M4-Stuff/esp32-projects/1-ranger-puck/tools/send.sh <STATE> "<line1>" "<line2>" GEMINI
 ```
 
 ---
@@ -25,12 +26,12 @@ The instant the harness pauses and pops up an *"Approve this action?"* prompt to
 ### How to prevent silent deadlocks:
 1. **Send `APPROVE` BEFORE the gated action:**
    ```bash
-   ~/esp32-projects/1-ranger-puck/tools/send.sh APPROVE "needs a yes" "prompting" GEMINI
+   ~/M4-Stuff/esp32-projects/1-ranger-puck/tools/send.sh APPROVE "needs a yes" "prompting" GEMINI
    ```
 2. **Execute the tool / edit / command.**
 3. **Overwrite immediately upon resuming:**
    ```bash
-   ~/esp32-projects/1-ranger-puck/tools/send.sh RUNNING "applying" "" GEMINI
+   ~/M4-Stuff/esp32-projects/1-ranger-puck/tools/send.sh RUNNING "applying" "" GEMINI
    ```
 
 > [!IMPORTANT]

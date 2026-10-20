@@ -3,7 +3,7 @@
 #
 #  Native PowerShell: NO jq, curl, bash or Git Bash needed — Invoke-RestMethod
 #  POSTs straight to the board. MUST always exit 0; a broken puck never breaks
-#  the session it reports on. Mirrors ~/esp32-projects/1-ranger-puck/hooks/
+#  the session it reports on. Mirrors ~/M4-Stuff/esp32-projects/1-ranger-puck/hooks/
 #  rangerpuck.sh (the Mac/Linux hook), tagged as WHO=MSI (violet on the board).
 #
 #  Wired via settings.json, e.g.:

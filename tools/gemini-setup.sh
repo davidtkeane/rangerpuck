@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Give Gemini (or any agent) the ability to drive the puck.
 # Run once; prints the line to paste into that agent's session.
-P="$HOME/esp32-projects/1-ranger-puck"
+P="$HOME/M4-Stuff/esp32-projects/1-ranger-puck"        # the M4 keeps it in M4-Stuff
+[ -d "$P" ] || P="$HOME/esp32-projects/1-ranger-puck"  # the other Macs
 echo
 echo "  Paste this into Gemini:"
 echo
